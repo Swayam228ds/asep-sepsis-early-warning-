@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>asep Sepsis Triage</title>
+<script src="https://cdn.tailwindcss.com/3.4.3"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tab-btn[aria-selected="true"] { border-color: #0f766e; color: #0f766e; }
+  .num { font-variant-numeric: tabular-nums; }
+  input[type=number]::-webkit-inner-spin-button { opacity: .4; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<header class="bg-white border-b border-slate-200">
+  <div class="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-2">
+    <div>
+      <h1 class="text-lg font-semibold">asep &middot; Sepsis early warning</h1>
+      <p class="text-xs text-slate-500">Risk of sepsis within 6 hours from bedside vitals. Decision support only; the clinical decision stays with the health worker.</p>
+    </div>
+    <nav class="flex gap-1 text-sm" role="tablist">
+      <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="triage" aria-selected="true">Bedside triage</button>
+      <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="metrics" aria-selected="false">Model validation</button>
+      <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="data" aria-selected="false">Synthetic data</button>
+    </nav>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-6">
+
+<!-- ============ Tab 1: triage ============ -->
+<section id="tab-triage" class="grid lg:grid-cols-5 gap-6">
+  <form id="vitals-form" class="lg:col-span-3 bg-white rounded-lg border border-slate-200 p-5">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+      <h2 class="font-semibold">Patient vitals</h2>
+      <div class="flex flex-wrap gap-1 text-xs">
+        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="normal">Normal</button>
+        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="shock">Septic shock</button>
+        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="minimal">Minimal equipment</button>
+        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="hypothermic">Elderly hypothermic</button>
+        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="clear">Clear</button>
+      </div>
+    </div>
+    <p class="text-xs text-slate-500 mb-4">Leave a field blank if it was not measured. Blank is sent as unknown (NaN), never as 0.</p>
+    <div id="fields" class="grid sm:grid-cols-2 gap-x-5 gap-y-3"></div>
+    <div class="mt-4 flex items-center justify-between text-sm">
+      <span>Mean arterial pressure (derived): <strong id="map-display" class="num">&mdash;</strong></span>
+      <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 font-medium" type="submit">Score patient</button>
+    </div>
+    <p id="form-error" class="text-sm text-red-700 mt-3 hidden"></p>
+  </form>
+
+  <div class="lg:col-span-2 space-y-4">
+    <div class="bg-white rounded-lg border border-slate-200 p-5">
+      <h2 class="font-semibold mb-3">Risk estimate</h2>
+      <div id="result-empty" class="text-sm text-slate-500">Enter vitals or pick a preset, then score.</div>
+      <div id="result" class="hidden">
+        <div class="flex items-baseline gap-3">
+          <span id="risk-score" class="text-4xl font-semibold num"></span>
+          <span id="risk-tier" class="text-sm font-semibold px-2 py-0.5 rounded"></span>
+        </div>
+        <div class="mt-3 h-3 rounded-full relative bg-gradient-to-r from-emerald-500 via-amber-400 to-red-600">
+          <div id="risk-marker" class="absolute -top-1 w-1.5 h-5 bg-slate-900 rounded"></div>
+        </div>
+        <div class="flex justify-between text-[11px] text-slate-500 mt-1 num"><span>0</span><span>Low &lt; {{ low }}</span><span>High &ge; {{ high }}</span><span>1</span></div>
+        <p id="completeness" class="text-xs text-slate-600 mt-3"></p>
+      </div>
+    </div>
+    <div id="guidance-card" class="bg-white rounded-lg border border-slate-200 p-5 hidden">
+      <h3 class="font-semibold mb-2 text-sm">Suggested next steps</h3>
+      <ul id="guidance" class="list-disc pl-5 text-sm space-y-1"></ul>
+    </div>
+    <div id="abnormal-card" class="bg-white rounded-lg border border-slate-200 p-5 hidden">
+      <h3 class="font-semibold mb-2 text-sm">Outside reference range</h3>
+      <div id="abnormal" class="flex flex-wrap gap-2"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Tab 2: metrics ============ -->
+<section id="tab-metrics" class="hidden space-y-6">
+  <div class="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-lg p-4">
+    These numbers come from <strong>synthetic</strong> patients, not PhysioNet. They show the pipeline working end to end
+    and how the risk tiers behave; they do not reproduce the model card's held-out results (AUROC 0.770, AUPRC 0.0825).
+    The generator shifts vitals in exactly the patterns SIRS and NEWS2 check for, so those rules can score unrealistically well here.
+  </div>
+  <div id="kpis" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+  <div class="grid md:grid-cols-2 gap-6">
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">ROC curve</h3><div class="h-64"><canvas id="roc-chart"></canvas></div></div>
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Precision–recall curve</h3><div class="h-64"><canvas id="pr-chart"></canvas></div></div>
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Observed sepsis rate by risk tier</h3><div class="h-64"><canvas id="tier-chart"></canvas></div></div>
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Score distribution</h3><div class="h-64"><canvas id="hist-chart"></canvas></div></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-6">
+    <div class="bg-white rounded-lg border border-slate-200 p-5 overflow-x-auto"><h3 class="font-semibold text-sm mb-3">Confusion matrices</h3><div id="confusion" class="grid sm:grid-cols-2 gap-4"></div></div>
+    <div class="bg-white rounded-lg border border-slate-200 p-5 overflow-x-auto"><h3 class="font-semibold text-sm mb-3">Against bedside rules (same columns)</h3><table id="baselines" class="w-full text-sm num"></table></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-6">
+    <div class="bg-white rounded-lg border border-slate-200 p-5 overflow-x-auto"><h3 class="font-semibold text-sm mb-3">By facility profile</h3><table id="facilities" class="w-full text-sm num"></table></div>
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Patient-level alarms</h3><div id="alarms" class="text-sm space-y-1"></div></div>
+  </div>
+</section>
+
+<!-- ============ Tab 3: data ============ -->
+<section id="tab-data" class="hidden space-y-6">
+  <div class="bg-white rounded-lg border border-slate-200 p-5 flex flex-wrap items-end gap-4">
+    <label class="text-sm">Patients<input id="gen-patients" type="number" min="50" max="5000" value="400" class="block mt-1 w-28 border border-slate-300 rounded px-2 py-1"></label>
+    <label class="text-sm">Seed<input id="gen-seed" type="number" value="42" class="block mt-1 w-24 border border-slate-300 rounded px-2 py-1"></label>
+    <button id="gen-btn" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 text-sm font-medium">Regenerate &amp; re-evaluate</button>
+    <label class="text-sm ml-auto">Show
+      <select id="label-filter" class="block mt-1 border border-slate-300 rounded px-2 py-1">
+        <option value="">All rows</option><option value="1">Septic hours only</option><option value="0">Non-septic hours only</option>
+      </select>
+    </label>
+    <span id="gen-status" class="text-sm text-slate-500 w-full"></span>
+  </div>
+  <div id="cohort" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+  <div class="bg-white rounded-lg border border-slate-200 p-5">
+    <h3 class="font-semibold text-sm mb-1">Sample rows</h3>
+    <p class="text-xs text-slate-500 mb-3">Click a row to load it into the triage form. Blank cells were never measured.</p>
+    <div class="overflow-auto max-h-[480px]"><table id="data-table" class="w-full text-xs num"></table></div>
+  </div>
+</section>
+</main>
+
+<script>
+const FEATURES = {{ features | tojson }};
+const NORMAL = {{ normal | tojson }};
+const LOW = {{ low }}, HIGH = {{ high }};
+const META = {
+  age: ["Age", "years"], hoursSinceAdmission: ["Hours since admission", "h"], HR: ["Heart rate", "bpm"],
+  Temp: ["Temperature", "°C"], Resp: ["Respiratory rate", "/min"], SBP: ["Systolic BP", "mmHg"],
+  DBP: ["Diastolic BP", "mmHg"], O2Sat: ["SpO₂", "%"], EtCO2: ["EtCO₂", "mmHg"],
+};
+const PRESETS = {
+  normal:      {age: 45, hoursSinceAdmission: 12, HR: 78, Temp: 36.8, Resp: 15, SBP: 122, DBP: 78, O2Sat: 98, EtCO2: 38},
+  shock:       {age: 65, hoursSinceAdmission: 10, HR: 126, Temp: 38.9, Resp: 28, SBP: 88, DBP: 52, O2Sat: 90},
+  minimal:     {age: 58, hoursSinceAdmission: 20, HR: 108, Temp: 38.6, Resp: 24, SBP: 104, DBP: 66},
+  hypothermic: {age: 82, hoursSinceAdmission: 30, HR: 112, Temp: 35.4, Resp: 26, SBP: 92, DBP: 54, O2Sat: 91},
+  clear: {},
+};
+const TIER_STYLE = {Low: "bg-emerald-100 text-emerald-800", Medium: "bg-amber-100 text-amber-800", High: "bg-red-100 text-red-800"};
+const fmt = (v, d = 3) => v === null || v === undefined ? "—" : Number(v).toFixed(d);
+const pct = (v, d = 1) => v === null || v === undefined ? "—" : (v * 100).toFixed(d) + "%";
+const $ = id => document.getElementById(id);
+
+// ---------- tabs ----------
+let metricsLoaded = false, dataLoaded = false;
+document.querySelectorAll(".tab-btn").forEach(btn => btn.addEventListener("click", () => {
+  document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", b === btn));
+  ["triage", "metrics", "data"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== btn.dataset.tab));
+  if (btn.dataset.tab === "metrics" && !metricsLoaded) loadMetrics();
+  if (btn.dataset.tab === "data" && !dataLoaded) loadData();
+}));
+
+// ---------- triage form ----------
+$("fields").innerHTML = FEATURES.map(f => {
+  const [label, unit] = META[f], ref = NORMAL[f] ? `normal ${NORMAL[f][0]}–${NORMAL[f][1]}` : "";
+  return `<label class="text-sm"><span class="flex justify-between"><span>${label} <span class="text-slate-400">${unit}</span></span><span class="text-[11px] text-slate-400">${ref}</span></span>
+    <input name="${f}" type="number" step="any" placeholder="not measured" class="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 num focus:outline-none focus:ring-2 focus:ring-teal-600"></label>`;
+}).join("");
+
+const form = $("vitals-form");
+function readForm() {
+  const out = {};
+  FEATURES.forEach(f => { const v = form.elements[f].value.trim(); out[f] = v === "" ? null : Number(v); });
+  return out;
+}
+function updateMap() {
+  const {SBP, DBP} = readForm();
+  $("map-display").textContent = SBP !== null && DBP !== null ? (DBP + (SBP - DBP) / 3).toFixed(1) + " mmHg" : "—";
+}
+form.addEventListener("input", updateMap);
+function fillForm(values) {
+  FEATURES.forEach(f => form.elements[f].value = values[f] ?? "");
+  updateMap();
+}
+document.querySelectorAll(".preset").forEach(b => b.addEventListener("click", () => {
+  fillForm(PRESETS[b.dataset.preset]);
+  if (b.dataset.preset !== "clear") form.requestSubmit(); else showResult(null);
+}));
+
+function showResult(r) {
+  ["result", "guidance-card", "abnormal-card"].forEach(id => $(id).classList.toggle("hidden", !r));
+  $("result-empty").classList.toggle("hidden", !!r);
+  if (!r) return;
+  $("risk-score").textContent = r.riskScore.toFixed(3);
+  $("risk-tier").textContent = r.tier.toUpperCase();
+  $("risk-tier").className = "text-sm font-semibold px-2 py-0.5 rounded " + TIER_STYLE[r.tier];
+  $("risk-marker").style.left = `calc(${r.riskScore * 100}% - 3px)`;
+  const c = r.completeness;
+  $("completeness").textContent = `Based on ${c.measured.length} of 7 vitals.` + (c.missing.length ? ` Not measured: ${c.missing.join(", ")}.` : "");
+  $("guidance").innerHTML = r.guidance.map(g => `<li>${g}</li>`).join("");
+  $("abnormal-card").classList.toggle("hidden", !r.abnormal.length);
+  $("abnormal").innerHTML = r.abnormal.map(a =>
+    `<span class="text-xs px-2 py-1 rounded ${a.direction === "high" ? "bg-red-50 text-red-800" : "bg-sky-50 text-sky-800"}">${a.feature} ${a.value} ${a.direction === "high" ? "▲" : "▼"}</span>`).join("");
+}
+
+form.addEventListener("submit", async e => {
+  e.preventDefault();
+  $("form-error").classList.add("hidden");
+  const res = await fetch("/api/predict", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(readForm())});
+  const body = await res.json();
+  if (!res.ok) {
+    $("form-error").textContent = Object.entries(body.errors).map(([k, v]) => k === "_" ? v : `${META[k][0]}: ${v}`).join(" · ");
+    $("form-error").classList.remove("hidden");
+    showResult(null);
+    return;
+  }
+  showResult(body);
+});
+
+// ---------- metrics ----------
+const charts = {};
+function chart(id, config) { charts[id]?.destroy(); charts[id] = new Chart($(id), config); }
+const axis = (title, max = 1) => ({title: {display: true, text: title}, min: 0, max, ticks: {maxTicksLimit: 6}});
+
+async function loadMetrics() {
+  const m = await (await fetch("/api/metrics")).json();
+  metricsLoaded = true;
+  renderMetrics(m);
+}
+function kpi(label, value, sub = "") {
+  return `<div class="bg-white rounded-lg border border-slate-200 p-4"><div class="text-xs text-slate-500">${label}</div><div class="text-2xl font-semibold num">${value}</div><div class="text-xs text-slate-500">${sub}</div></div>`;
+}
+function renderMetrics(m) {
+  const s = m.summary;
+  $("kpis").innerHTML = kpi("AUROC", fmt(s.auroc)) + kpi("AUPRC", fmt(s.auprc), `${fmt(s.lift, 1)}× over base rate`)
+    + kpi("Base rate", pct(s.positive_rate), `${s.rows.toLocaleString()} patient-hours`)
+    + kpi("Septic patients", s.septic_patients, `of ${s.patients}`);
+
+  const line = (pts, color, label) => ({label, data: pts.x.map((x, i) => ({x, y: pts.y[i]})), borderColor: color, pointRadius: 0, borderWidth: 2, showLine: true});
+  const common = {responsive: true, maintainAspectRatio: false, animation: false};
+  chart("roc-chart", {type: "scatter", data: {datasets: [line(m.roc, "#0f766e", "Model"),
+      {label: "Chance", data: [{x: 0, y: 0}, {x: 1, y: 1}], borderColor: "#cbd5e1", borderDash: [4, 4], pointRadius: 0, showLine: true}]},
+    options: {...common, scales: {x: axis("False positive rate"), y: axis("True positive rate")}}});
+  chart("pr-chart", {type: "scatter", data: {datasets: [line(m.pr, "#0f766e", "Model"),
+      {label: "Base rate", data: [{x: 0, y: s.positive_rate}, {x: 1, y: s.positive_rate}], borderColor: "#cbd5e1", borderDash: [4, 4], pointRadius: 0, showLine: true}]},
+    options: {...common, scales: {x: axis("Recall"), y: axis("Precision")}}});
+  chart("tier-chart", {type: "bar", data: {labels: m.tiers.map(t => `${t.tier} (n=${t.n})`),
+      datasets: [{label: "Observed sepsis rate", data: m.tiers.map(t => (t.observed_rate ?? 0) * 100), backgroundColor: ["#10b981", "#f59e0b", "#dc2626"]}]},
+    options: {...common, plugins: {legend: {display: false}}, scales: {y: {title: {display: true, text: "% of hours septic within 6 h"}, beginAtZero: true}}}});
+  const h = m.score_histogram, labels = h.bins.slice(0, -1).map(b => b.toFixed(2));
+  const norm = arr => { const t = arr.reduce((a, b) => a + b, 0) || 1; return arr.map(v => v / t * 100); };
+  chart("hist-chart", {type: "bar", data: {labels, datasets: [
+      {label: "Non-septic hours", data: norm(h.non_septic), backgroundColor: "#94a3b8"},
+      {label: "Septic hours", data: norm(h.septic), backgroundColor: "#dc2626"}]},
+    options: {...common, scales: {x: {title: {display: true, text: "riskScore"}}, y: {title: {display: true, text: "% of group"}}}}});
+
+  $("confusion").innerHTML = m.confusion.map(c => `
+    <div><div class="text-xs text-slate-500 mb-1">Alarm at score ≥ ${c.threshold}</div>
+    <table class="w-full text-center text-sm num border border-slate-200"><tr class="bg-slate-50"><td></td><td class="p-1">Pred +</td><td class="p-1">Pred −</td></tr>
+      <tr><td class="p-1 bg-slate-50">Actual +</td><td class="p-1 bg-emerald-50">${c.tp}</td><td class="p-1 bg-red-50">${c.fn}</td></tr>
+      <tr><td class="p-1 bg-slate-50">Actual −</td><td class="p-1 bg-red-50">${c.fp}</td><td class="p-1 bg-emerald-50">${c.tn}</td></tr></table>
+    <div class="text-xs mt-2 grid grid-cols-2 gap-x-2">
+      <span>Sensitivity ${pct(c.sensitivity)}</span><span>Specificity ${pct(c.specificity)}</span>
+      <span>PPV ${pct(c.ppv)}</span><span>NPV ${pct(c.npv)}</span><span>F1 ${fmt(c.f1)}</span></div></div>`).join("");
+
+  $("baselines").innerHTML = `<tr class="text-left text-slate-500"><th class="pb-2">Model</th><th>AUPRC</th><th>Lift</th><th>AUROC</th></tr>` +
+    m.baselines.map(b => `<tr class="border-t border-slate-100 ${b.model === "This model" ? "font-semibold" : ""}"><td class="py-1.5">${b.model}</td><td>${fmt(b.auprc)}</td><td>${fmt(b.lift, 1)}×</td><td>${fmt(b.auroc)}</td></tr>`).join("");
+  $("facilities").innerHTML = `<tr class="text-left text-slate-500"><th class="pb-2">Profile</th><th>Patients</th><th>Septic</th><th>AUROC</th><th>Sens. ≥${HIGH}</th></tr>` +
+    m.facilities.map(f => `<tr class="border-t border-slate-100"><td class="py-1.5">${f.facility.replaceAll("_", " ")}</td><td>${f.patients}</td><td>${f.septic_patients}</td><td>${fmt(f.auroc)}</td><td>${pct(f.sensitivity, 0)}</td></tr>`).join("");
+  const a = m.alarms;
+  $("alarms").innerHTML = `
+    <p><strong class="num">${a.alarmed_before_onset} of ${a.septic_patients}</strong> septic patients reached the High tier before onset.</p>
+    <p>Median lead time: <strong class="num">${a.median_lead_hours ?? "—"} h</strong> before onset.</p>
+    <p><strong class="num">${a.controls_ever_alarmed} of ${a.control_patients}</strong> non-septic patients reached High at least once during their stay.</p>`;
+}
+
+// ---------- data explorer ----------
+async function loadData() {
+  dataLoaded = true;
+  const [rows, m] = await Promise.all([
+    fetch("/api/dataset?limit=300&label=" + $("label-filter").value).then(r => r.json()),
+    fetch("/api/metrics").then(r => r.json())]);
+  const s = m.summary, miss = m.missingness;
+  $("cohort").innerHTML = kpi("Patients", s.patients, `${s.septic_patients} septic`) + kpi("Patient-hours", s.rows.toLocaleString())
+    + kpi("Septic-hour rate", pct(s.positive_rate)) + kpi("Most missing", Object.entries(miss).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => `${k} ${pct(v, 0)}`).join(", "));
+  const cols = ["patient_id", "hour", "facility", ...FEATURES, "SepsisLabel"];
+  $("data-table").innerHTML = `<thead class="sticky top-0 bg-white"><tr class="text-left text-slate-500">${cols.map(c => `<th class="pr-3 pb-2">${c}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map((r, i) => `<tr data-i="${i}" class="border-t border-slate-100 hover:bg-teal-50 cursor-pointer ${r.SepsisLabel ? "text-red-700" : ""}">${cols.map(c => `<td class="pr-3 py-1">${r[c] ?? ""}</td>`).join("")}</tr>`).join("") + "</tbody>";
+  $("data-table").querySelectorAll("tbody tr").forEach(tr => tr.addEventListener("click", () => {
+    fillForm(rows[tr.dataset.i]);
+    document.querySelector('[data-tab="triage"]').click();
+    form.requestSubmit();
+  }));
+}
+$("label-filter").addEventListener("change", loadData);
+$("gen-btn").addEventListener("click", async () => {
+  $("gen-status").textContent = "Generating and scoring…";
+  const res = await fetch("/api/generate-data", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({patients: Number($("gen-patients").value), seed: Number($("gen-seed").value)})});
+  const body = await res.json();
+  if (!res.ok) { $("gen-status").textContent = Object.values(body.errors).join(" "); return; }
+  $("gen-status").textContent = `Done: AUROC ${fmt(body.summary.auroc)}, AUPRC ${fmt(body.summary.auprc)} on ${body.summary.rows.toLocaleString()} rows.`;
+  metricsLoaded = false;
+  loadData();
+});
+</script>
+</body>
+</html>
