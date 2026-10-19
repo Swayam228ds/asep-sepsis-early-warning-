@@ -1,10 +1,14 @@
-# asep: Sepsis Early Warning When Vitals Are Missing
+# Hospital Bed Manager: admission, waiting list and bed planning for crowded hospitals
 
-A web app that estimates a patient's risk of developing **sepsis within the next 6 hours** from bedside vital signs. It is designed for primary-care clinics that cannot measure every vital: any reading that wasn't taken is simply left blank, and the model still scores the patient.
+A web dashboard for government hospitals where patients wait days or weeks for a bed. It answers three questions every day:
 
-> **Decision support only.** The app shows a risk estimate and how complete the data behind it is. The clinical decision stays with the health worker.
+1. **Will this patient need a bed?** A model trained on 560,486 real emergency visits predicts admission from what a triage nurse knows at the door.
+2. **Who gets the next free bed?** A transparent priority score ranks the waiting list by urgency, days waited and admission probability.
+3. **When will beds free up?** A length-of-stay model predicts each admitted patient's discharge date, so the hospital can call people off the waiting list early.
 
-Data Science Programming course project: final review.
+> **Decision support only.** The platform suggests; doctors decide who is admitted.
+
+Data Science Programming course project.
 
 | Team member | Register no. |
 |---|---|
@@ -14,127 +18,97 @@ Data Science Programming course project: final review.
 
 ---
 
-## What it does
+## Status
 
-- **Bedside triage:** enter whatever vitals you have and get a risk score from 0 to 1, a risk tier (Low < 0.3 ≤ Medium < 0.6 ≤ High), suggested next steps and flags for abnormal vitals.
-- **Model validation dashboard:** ROC and precision–recall curves, observed sepsis rate per risk tier, confusion matrices, and a comparison with the qSOFA, SIRS and NEWS2 bedside rules.
-- **Synthetic data explorer:** generate a new test cohort, browse it, and click any row to score it.
+| Part | Data | State |
+|---|---|---|
+| Triage admission model (M2) | Yale ED triage dataset | Trained. AUROC 0.880 vs 0.765 for ESI level alone, 0.853 on an ED never seen in training |
+| Waiting list priority | Rule, weights editable in the dashboard | Done |
+| Length-of-stay model (M3) | Hero DMC Heart Institute, Ludhiana | Waiting for the dataset; the dashboard uses a typical-stay placeholder until then |
+| Admissions forecast (M1, optional) | Hero DMC Heart Institute, Ludhiana | Waiting for the dataset; flat placeholder until then |
 
-![Triage screen](docs/triage.png)
+## Run it
 
-## Setup
-
-You need **Python 3.10 or newer**. The app runs on CPU; no GPU or internet connection is needed once the packages are installed. (The dashboard loads Tailwind CSS and Chart.js from a CDN, so the browser needs internet access for styling and charts.)
-
-**1. Clone the repository**
-
-```bash
-git clone https://github.com/<your-username>/asep-sepsis-early-warning.git
-cd asep-sepsis-early-warning
-```
-
-**2. Create a virtual environment (recommended)**
-
-Windows:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-macOS / Linux:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-**3. Install the dependencies**
+You need **Python 3.10 or newer**. Everything runs on a laptop CPU; no GPU is needed.
 
 ```bash
 pip install -r requirements.txt
-```
-
-**4. Run the app**
-
-```bash
 python app.py
 ```
 
-Open **http://localhost:5000** in your browser. On the first run the app generates a synthetic test dataset and its metrics in `data/`, which takes a few seconds.
+Open **http://localhost:5000**. The first run creates a demo hospital in `data/hospital.db`: three 20-bed wards, about 50 admitted patients and 40 people on the waiting list. All names are made up. Use **Next day** to move the clock forward (patients are discharged, new ones arrive and the top of the queue is admitted) and **Reset demo** to start again.
 
-### Optional: regenerate the data and metrics from the command line
+### Dashboard pages
+
+| Page | What it shows |
+|---|---|
+| Overview | Beds occupied, waiting list size, discharges and admissions expected tomorrow, and tomorrow's bed gap. A 7-day chart of beds freeing up against expected admissions. |
+| Waiting list | The queue ranked by priority. Change urgency, change the priority weights, admit the top patient, add a planned patient. |
+| Emergency intake | Triage form that predicts admission probability with the main reasons, then adds the patient to the queue. |
+| Bed board | Every bed by ward: free, freeing within a day, or occupied, with each patient's predicted discharge date and range. |
+| Model report | Each model's results against its baseline. |
+
+## Train the models
+
+The trained triage model is already in `models/`, so the app works without retraining.
+
+**M2, triage admission (Yale).** Download `Results/5v_cleandf.RData` from [yaleemmlc/admissionprediction](https://github.com/yaleemmlc/admissionprediction). It is too big for Python's `pyreadr` (it needs more than 14 GB of RAM), so convert it with R first, then train:
 
 ```bash
-python generate_test_data.py --patients 400 --seed 42
-python evaluate_model.py
+Rscript training/prepare_yale.R 5v_cleandf.RData data/raw/yale_triage_subset.csv.gz
+python training/m2_triage.py
 ```
 
-`generate_test_data.py` writes `data/synthetic_clinical_test.csv`; `evaluate_model.py` scores it and writes `data/model_metrics.json`, printing a summary like:
+This takes about two minutes on a 4-core CPU. It uses only triage-time inputs (ESI level, age, sex, arrival mode and time, the 7 triage vitals, the 60 most common chief complaints and counts of past visits). Race, religion, insurance and other social columns are left out on purpose.
 
-```
-AUROC 0.8738  AUPRC 0.2785  lift 9.2x  base rate 3.01%
-  Low    n=9677   observed sepsis 0.95%
-  Medium n=1349   observed sepsis 5.63%
-  High   n=891    observed sepsis 21.44%
-```
+| Triage model results (test set, 112,098 visits) | AUROC | AUPRC |
+|---|---|---|
+| LightGBM, our model | 0.880 | 0.754 |
+| Logistic regression, same inputs | 0.863 | 0.716 |
+| ESI level alone (what triage uses today) | 0.765 | 0.496 |
+| LightGBM trained on EDs A and B, tested on ED C | 0.853 | |
+
+**M3 and M1 (Ludhiana).** Scripts follow once the Hero DMC files are added to `data/raw/`.
 
 ## API
 
-| Method | Endpoint | Description |
+| Method | Endpoint | Does |
 |---|---|---|
-| `POST` | `/api/predict` | Score one patient. JSON body with any of the 9 features; omitted, `null` or blank fields are treated as not measured. |
-| `GET` | `/api/metrics` | Evaluation metrics for the current synthetic dataset. |
-| `GET` | `/api/dataset?limit=200&label=1` | Sample rows from the synthetic dataset (`label` optional: `0` or `1`). |
-| `POST` | `/api/generate-data` | Regenerate the dataset and metrics. Body: `{"patients": 400, "seed": 42}` (50–5000 patients). |
-
-Example:
-
-```bash
-curl -X POST http://localhost:5000/api/predict -H "Content-Type: application/json" -d "{\"age\":65,\"hoursSinceAdmission\":10,\"HR\":126,\"Temp\":38.9,\"Resp\":28,\"SBP\":88,\"DBP\":52,\"O2Sat\":90}"
-```
-
-```json
-{"riskScore": 0.9618, "tier": "High", "MAP": 64.0, "abnormal": [...], "completeness": {"missing": ["EtCO2"], ...}, "guidance": [...]}
-```
-
-### Model inputs
-
-| Feature | Unit | Feature | Unit |
-|---|---|---|---|
-| `age` | years | `SBP` | mmHg |
-| `hoursSinceAdmission` | hours | `DBP` | mmHg |
-| `HR` | beats/min | `O2Sat` | % |
-| `Temp` | °C | `EtCO2` | mmHg |
-| `Resp` | breaths/min | | |
-
-A missing vital must be sent as missing (`NaN`), **never as 0**. Mean arterial pressure is derived from SBP and DBP inside the model. The API rejects physiologically impossible values (for example SBP 0) and needs at least two vitals to score.
+| GET | `/api/overview` | Bed counts, tomorrow's discharges, admissions and bed gap, 7-day forecast |
+| GET, POST | `/api/queue` | List the waiting list; add a patient |
+| POST | `/api/queue/<id>/admit` | Put the patient in a free bed and predict their stay |
+| POST | `/api/queue/<id>/urgency` | Set urgency 1 to 3 |
+| POST | `/api/settings` | Change the priority weights |
+| POST | `/api/triage` | Admission probability and reasons for one emergency patient |
+| GET | `/api/beds` | Every bed with status and predicted discharge |
+| POST | `/api/beds/<id>/discharge` | Free a bed |
+| POST | `/api/simulate/next-day`, `/api/simulate/reset` | Demo clock |
+| GET | `/api/metrics` | Results of every trained model |
 
 ## Project structure
 
 ```
-app.py                  Flask API and web server
-generate_test_data.py   Synthetic patient-hour generator
-evaluate_model.py       Scoring, metrics and baseline comparison
+app.py                  Flask routes for the dashboard
+hospital/db.py          SQLite tables (wards, beds, patients, settings)
+hospital/models.py      Loads trained models, with clearly labelled fallbacks
+hospital/services.py    Waiting list priority, admit, discharge, overview, next-day simulation
+hospital/seed_demo.py   Demo hospital with made-up patients
 templates/index.html    Dashboard (Tailwind CSS + Chart.js)
-sepsis-model.onnx       Pre-trained LightGBM model (ONNX)
-MODEL_CARD.md           Model card from the model's authors
-project_plan.md         Original architecture and implementation plan
-asep_final_review.pptx  Final review presentation
-docs/triage.png         Screenshot used in this README
+training/               Training scripts for each model
+models/                 Trained models and their metrics
+sepsis_app.py           Earlier sepsis early-warning project (python sepsis_app.py)
 ```
 
-## About the model and the data
+## Limits
 
-- **Model:** `sepsis-model.onnx` is the pre-trained **asep-sepsis-onnx** model by **team MyLove (Datathon 2026)**, a LightGBM model trained on the PhysioNet/CinC Challenge 2019 dataset. See [MODEL_CARD.md](MODEL_CARD.md) for how it was trained and the authors' own results. Our work is the data generator, evaluation, API, dashboard and testing around it.
-- **Evaluation data is synthetic.** Real ICU records require credentialed access, so `generate_test_data.py` creates realistic hourly vital-sign trajectories with sepsis onsets, equipment profiles and sensor dropouts. Results on this data show the system working end to end; they are not clinical performance figures.
-- **Known limitation:** the generator shifts septic patients' vitals across the same thresholds that SIRS and NEWS2 check, so those rules score unrealistically well on synthetic data (partial NEWS2 beats the model here). Validating on real PhysioNet records is the main next step.
+- The triage model learned from US emergency departments, and the length-of-stay model will learn from one Indian heart hospital. A real deployment would retrain on the hospital's own records.
+- Demo patients are simulated; nothing here is live hospital data.
+
+## Earlier work: sepsis early warning
+
+The previous version of this project, a sepsis risk score from bedside vitals, still runs with `python sepsis_app.py` (files `sepsis_app.py`, `evaluate_model.py`, `generate_test_data.py`, `sepsis-model.onnx`, `MODEL_CARD.md`). It uses a model trained by another team and synthetic test data, so it is no longer part of the dashboard.
 
 ## References
 
-- Reyna MA, Josef CS, Jeter R, et al. *Early Prediction of Sepsis From Clinical Data: The PhysioNet/Computing in Cardiology Challenge 2019.* Critical Care Medicine 2020;48(2):210–217. https://physionet.org/content/challenge-2019/1.0.0/
-- Singer M, et al. *The Third International Consensus Definitions for Sepsis and Septic Shock (Sepsis-3).* JAMA 2016;315(8):801–810.
-- Royal College of Physicians. *National Early Warning Score (NEWS) 2.* 2017.
-- [ONNX Runtime](https://onnxruntime.ai/) · [Flask](https://flask.palletsprojects.com/) · [scikit-learn](https://scikit-learn.org/) · [Chart.js](https://www.chartjs.org/)
-
-The model weights are derived from the PhysioNet/CinC 2019 dataset; check its terms before redistributing them.
+- Hong WS, Haimovich AD, Taylor RA. *Predicting hospital admission at emergency department triage using machine learning.* PLoS ONE 2018;13(7):e0201016. https://doi.org/10.1371/journal.pone.0201016 (dataset: https://github.com/yaleemmlc/admissionprediction)
+- [LightGBM](https://lightgbm.readthedocs.io/) · [Flask](https://flask.palletsprojects.com/) · [scikit-learn](https://scikit-learn.org/) · [Chart.js](https://www.chartjs.org/)
