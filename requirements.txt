@@ -4,3 +4,5 @@ pandas
 scikit-learn
 flask>=3.0
 flask-cors
+lightgbm>=4.0
+holidays

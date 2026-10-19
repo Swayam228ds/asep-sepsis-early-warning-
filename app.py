@@ -1,149 +1,214 @@
-"""Flask API and UI for the asep sepsis early-warning model."""
+"""Flask API and dashboard for the hospital bed management platform.
 
-import json
-import math
-from pathlib import Path
+Two separate versions, each with its own database:
+  python app.py              demo hospital with simulated patients    http://localhost:5000
+  python app.py --hospital   empty hospital that staff set up         http://localhost:5001
+"""
+import argparse
+import os
+import sys
 
-import numpy as np
-import pandas as pd
 from flask import Flask, jsonify, render_template, request
-from flask_cors import CORS
 
-from evaluate_model import FEATURES, HIGH_CUTOFF, LOW_CUTOFF, evaluate, load_session, tier
-from generate_test_data import BOUNDS, generate
+from hospital import db, models, services
+from hospital.seed_demo import seed
 
-ROOT = Path(__file__).parent
-DATA_PATH = ROOT / "data" / "synthetic_clinical_test.csv"
-METRICS_PATH = ROOT / "data" / "model_metrics.json"
-
-# Bounds for the patient-context columns; vitals reuse the generator's plausibility bounds.
-INPUT_BOUNDS = {"age": (18, 120), "hoursSinceAdmission": (0, 10000), **BOUNDS}
-
-# Adult reference ranges used only to flag readings in the UI.
-NORMAL_RANGES = {"HR": (60, 100), "Temp": (36.0, 38.0), "Resp": (12, 20), "SBP": (100, 140),
-                 "DBP": (60, 90), "O2Sat": (94, 100), "EtCO2": (35, 45), "MAP": (65, 110)}
-
-GUIDANCE = {
-    "Low": ["Continue routine monitoring at the usual interval.",
-            "Re-score if any vital sign changes or the patient's condition worsens."],
-    "Medium": ["Increase observation frequency and re-score within 1-2 hours.",
-               "Review for a possible source of infection; consider lactate if available.",
-               "Measure any missing vitals to improve the estimate."],
-    "High": ["Request prompt clinician review.",
-             "Assess for sepsis per local protocol (e.g. lactate, cultures, fluid status).",
-             "Consider referral or escalation if the facility cannot manage deterioration."],
-}
+LIVE = "--hospital" in sys.argv or os.environ.get("HOSPITAL_MODE") == "live"
+db.configure(db.LIVE_DB if LIVE else db.DEMO_DB)
 
 app = Flask(__name__)
-CORS(app)
-session = load_session()
+app.json.sort_keys = False
 
 
-def ensure_data():
-    if not DATA_PATH.exists() or not METRICS_PATH.exists():
-        regenerate(400, 42)
+def ensure_db():
+    if db.DB_PATH.exists():
+        return
+    with db.session() as con:
+        if LIVE:
+            db.init(con)
+            db.set_setting(con, "mode", "live")
+        else:
+            seed(con)
 
 
-def regenerate(n_patients, seed):
-    df = generate(n_patients=n_patients, seed=seed)
-    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(DATA_PATH, index=False)
-    METRICS_PATH.write_text(json.dumps(evaluate(df, session)))
+ensure_db()
 
 
-def parse_features(payload):
-    """Return (row, errors). Omitted, null or blank fields become NaN, never 0."""
-    row, errors = [], {}
-    for name in FEATURES:
-        raw = payload.get(name)
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
-            row.append(math.nan)
-            continue
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            errors[name] = "not a number"
-            continue
-        lo, hi = INPUT_BOUNDS[name]
-        if not (lo <= value <= hi) or math.isnan(value):
-            errors[name] = f"outside plausible range {lo}-{hi}"
-            continue
-        row.append(value)
-    return row, errors
-
-
-def nan_to_none(x):
-    return None if x is None or (isinstance(x, float) and math.isnan(x)) else x
+def error(msg, code=400):
+    return jsonify({"error": msg}), code
 
 
 @app.get("/")
 def index():
-    return render_template("index.html", features=FEATURES, normal=NORMAL_RANGES,
-                           low=LOW_CUTOFF, high=HIGH_CUTOFF)
+    meta = models.triage_meta() or {}
+    with db.session() as con:
+        ward_names = [w["name"] for w in services.wards(con)]
+        name = db.get_settings(con).get("hospital_name") or ("Demo hospital" if not LIVE else "")
+    return render_template("index.html", wards=ward_names, complaints=meta.get("complaints", []),
+                           arrival_modes=meta.get("categories", {}).get("arrivalmode", []),
+                           live=LIVE, needs_setup=LIVE and not ward_names, hospital_name=name)
 
 
-@app.post("/api/predict")
-def predict():
-    payload = request.get_json(silent=True) or {}
-    row, errors = parse_features(payload)
-    if errors:
-        return jsonify({"errors": errors}), 400
+# ---------- setup (hospital version only) ----------
 
-    values = dict(zip(FEATURES, row))
-    vitals_present = [f for f in FEATURES[2:] if not math.isnan(values[f])]
-    if len(vitals_present) < 2:
-        return jsonify({"errors": {"_": "Enter at least two vital signs to score."}}), 400
+@app.post("/api/setup")
+def setup():
+    data = request.get_json(silent=True) or {}
+    with db.session() as con:
+        try:
+            services.setup_hospital(con, data.get("name", ""), data.get("wards", []))
+        except (ValueError, KeyError, TypeError) as e:
+            return error(str(e))
+    return jsonify({"ok": True}), 201
 
-    risk = float(session.run(["riskScore"], {"input": np.array([row], dtype=np.float32)})[0][0])
-    sbp, dbp = values["SBP"], values["DBP"]
-    map_value = dbp + (sbp - dbp) / 3  # same formula as the ONNX graph; NaN if either is missing
-    level = tier(risk)
 
-    flags = []
-    for name, (lo, hi) in NORMAL_RANGES.items():
-        v = map_value if name == "MAP" else values[name]
-        if not math.isnan(v) and not (lo <= v <= hi):
-            flags.append({"feature": name, "value": round(v, 1), "direction": "low" if v < lo else "high",
-                          "range": [lo, hi]})
+@app.get("/api/wards")
+def get_wards():
+    with db.session() as con:
+        return jsonify({"wards": services.wards(con), "hospital_name": db.get_settings(con).get("hospital_name")})
 
-    return jsonify({
-        "riskScore": round(risk, 4), "tier": level, "MAP": nan_to_none(round(map_value, 1)),
-        "guidance": GUIDANCE[level], "abnormal": flags,
-        "completeness": {"measured": vitals_present,
-                         "missing": [f for f in FEATURES[2:] if f not in vitals_present]},
-    })
+
+@app.post("/api/wards")
+def add_ward():
+    data = request.get_json(silent=True) or {}
+    with db.session() as con:
+        try:
+            services.add_ward(con, data.get("name"), int(data.get("beds", 0)))
+        except (ValueError, TypeError) as e:
+            return error(str(e))
+    return jsonify({"ok": True}), 201
+
+
+@app.post("/api/wards/<int:ward_id>/beds")
+def add_beds(ward_id):
+    data = request.get_json(silent=True) or {}
+    with db.session() as con:
+        try:
+            services.add_beds(con, ward_id, int(data.get("count", 0)))
+        except (ValueError, TypeError) as e:
+            return error(str(e))
+    return jsonify({"ok": True})
+
+
+@app.get("/api/overview")
+def overview():
+    with db.session() as con:
+        return jsonify(services.overview(con, int(request.args.get("days", 7))))
+
+
+@app.get("/api/queue")
+def get_queue():
+    with db.session() as con:
+        return jsonify({"queue": services.queue(con), "settings": db.get_settings(con)})
+
+
+@app.post("/api/queue")
+def add_to_queue():
+    data = request.get_json(silent=True) or {}
+    if not data.get("name"):
+        return error("name is required")
+    with db.session() as con:
+        pid = services.add_patient(con, data)
+        out = {"id": pid}
+        if data.get("admit_now"):
+            try:
+                out.update(services.admit(con, pid))
+            except ValueError as e:
+                out["admit_error"] = str(e)
+        return jsonify(out), 201
+
+
+@app.post("/api/queue/<int:pid>/remove")
+def remove(pid):
+    with db.session() as con:
+        try:
+            services.remove_from_queue(con, pid)
+        except ValueError as e:
+            return error(str(e), 409)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/queue/<int:pid>/admit")
+def admit(pid):
+    data = request.get_json(silent=True) or {}
+    with db.session() as con:
+        try:
+            return jsonify(services.admit(con, pid, data.get("bed_id")))
+        except ValueError as e:
+            return error(str(e), 409)
+
+
+@app.post("/api/queue/<int:pid>/urgency")
+def set_urgency(pid):
+    u = int((request.get_json(silent=True) or {}).get("urgency", 1))
+    if u not in (1, 2, 3):
+        return error("urgency must be 1, 2 or 3")
+    with db.session() as con:
+        con.execute("UPDATE patients SET urgency = ? WHERE id = ? AND status = 'waiting'", (u, pid))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/settings")
+def update_settings():
+    data = request.get_json(silent=True) or {}
+    with db.session() as con:
+        for k in ("w_urgency", "w_wait", "w_prob", "wait_cap"):
+            if k in data:
+                db.set_setting(con, k, float(data[k]))
+        return jsonify(db.get_settings(con))
+
+
+@app.post("/api/triage")
+def triage():
+    values = request.get_json(silent=True) or {}
+    if values.get("esi") in (None, ""):
+        return error("ESI level is required")
+    out = models.predict_admit(values)
+    out["suggested_urgency"] = models.urgency_from_esi(values["esi"])
+    return jsonify(out)
+
+
+@app.get("/api/beds")
+def beds():
+    with db.session() as con:
+        return jsonify(services.beds(con))
+
+
+@app.post("/api/beds/<int:bed_id>/discharge")
+def discharge(bed_id):
+    with db.session() as con:
+        try:
+            services.discharge(con, bed_id)
+        except ValueError as e:
+            return error(str(e), 409)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/simulate/next-day")
+def next_day():
+    if LIVE:
+        return error("the clock only moves in the demo", 403)
+    with db.session() as con:
+        return jsonify(services.next_day(con))
+
+
+@app.post("/api/simulate/reset")
+def reset():
+    if LIVE:
+        return error("reset is only available in the demo", 403)
+    with db.session() as con:
+        seed(con)
+    return jsonify({"ok": True})
 
 
 @app.get("/api/metrics")
 def metrics():
-    ensure_data()
-    return app.response_class(METRICS_PATH.read_text(), mimetype="application/json")
-
-
-@app.get("/api/dataset")
-def dataset():
-    ensure_data()
-    df = pd.read_csv(DATA_PATH)
-    limit = min(int(request.args.get("limit", 200)), 2000)
-    only = request.args.get("label")
-    if only in ("0", "1"):
-        df = df[df.SepsisLabel == int(only)]
-    df = df.sample(n=min(limit, len(df)), random_state=0).sort_values(["patient_id", "hour"])
-    cols = ["patient_id", "hour", "facility", *FEATURES, "SepsisLabel"]
-    return jsonify(json.loads(df[cols].to_json(orient="records")))
-
-
-@app.post("/api/generate-data")
-def generate_data():
-    payload = request.get_json(silent=True) or {}
-    n = int(payload.get("patients", 400))
-    seed = int(payload.get("seed", 42))
-    if not 50 <= n <= 5000:
-        return jsonify({"errors": {"patients": "must be between 50 and 5000"}}), 400
-    regenerate(n, seed)
-    return metrics()
+    return jsonify(models.all_metrics())
 
 
 if __name__ == "__main__":
-    ensure_data()
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hospital", action="store_true", help="run the empty hospital version instead of the demo")
+    ap.add_argument("--port", type=int)
+    args = ap.parse_args()
+    app.run(host="127.0.0.1", port=args.port or (5001 if LIVE else 5000), debug=False)

@@ -3,302 +3,486 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>asep Sepsis Triage</title>
+<title>{{ "Hospital Bed Manager" if not live else (hospital_name or "Hospital") + " · Bed Manager" }}</title>
 <script src="https://cdn.tailwindcss.com/3.4.3"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   .tab-btn[aria-selected="true"] { border-color: #0f766e; color: #0f766e; }
   .num { font-variant-numeric: tabular-nums; }
-  input[type=number]::-webkit-inner-spin-button { opacity: .4; }
+  .bed { min-height: 4.25rem; }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
 
 <header class="bg-white border-b border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-2">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h1 class="text-lg font-semibold">asep &middot; Sepsis early warning</h1>
-      <p class="text-xs text-slate-500">Risk of sepsis within 6 hours from bedside vitals. Decision support only; the clinical decision stays with the health worker.</p>
+      <h1 class="text-lg font-semibold">{% if live %}{{ hospital_name or "New hospital" }} <span class="text-slate-400 font-normal">· Bed Manager</span>{% else %}Hospital Bed Manager <span class="text-xs font-normal bg-amber-100 text-amber-800 rounded px-1.5 py-0.5 align-middle">Demo</span>{% endif %}</h1>
+      <p class="text-xs text-slate-500">Who needs a bed, who gets the next one, and when beds will free up. Decision support only; doctors decide.</p>
     </div>
-    <nav class="flex gap-1 text-sm" role="tablist">
-      <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="triage" aria-selected="true">Bedside triage</button>
-      <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="metrics" aria-selected="false">Model validation</button>
-      <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="data" aria-selected="false">Synthetic data</button>
-    </nav>
+    <div class="flex items-center gap-2 text-sm">
+      <span class="text-slate-500">{{ "Today" if live else "Demo date" }}</span>
+      <strong id="today" class="num">&mdash;</strong>
+      {% if not live %}
+      <button id="next-day" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-3 py-1.5">Next day &rarr;</button>
+      <button id="reset" class="border border-slate-300 hover:bg-slate-100 rounded px-3 py-1.5">Reset demo</button>
+      {% endif %}
+    </div>
   </div>
+  {% if not needs_setup %}
+  <nav class="max-w-7xl mx-auto px-4 flex gap-1 text-sm overflow-x-auto" role="tablist">
+    <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="overview" aria-selected="true">Overview</button>
+    <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="queue" aria-selected="false">Waiting list</button>
+    <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="intake" aria-selected="false">Emergency intake</button>
+    <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="beds" aria-selected="false">Bed board</button>
+    <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="report" aria-selected="false">Model report</button>
+    {% if live %}<button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="setup" aria-selected="false">Wards &amp; beds</button>{% endif %}
+  </nav>
+  {% endif %}
 </header>
 
-<main class="max-w-6xl mx-auto px-4 py-6">
+<div id="toast" class="hidden fixed bottom-4 right-4 bg-slate-900 text-white text-sm rounded px-4 py-2 shadow"></div>
 
-<!-- ============ Tab 1: triage ============ -->
-<section id="tab-triage" class="grid lg:grid-cols-5 gap-6">
-  <form id="vitals-form" class="lg:col-span-3 bg-white rounded-lg border border-slate-200 p-5">
-    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-      <h2 class="font-semibold">Patient vitals</h2>
-      <div class="flex flex-wrap gap-1 text-xs">
-        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="normal">Normal</button>
-        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="shock">Septic shock</button>
-        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="minimal">Minimal equipment</button>
-        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="hypothermic">Elderly hypothermic</button>
-        <button type="button" class="preset px-2 py-1 rounded border border-slate-300 hover:bg-slate-100" data-preset="clear">Clear</button>
-      </div>
+<main class="max-w-7xl mx-auto px-4 py-6">
+{% if needs_setup %}
+<!-- ============ First-time setup (hospital version) ============ -->
+<section id="tab-wizard" class="max-w-2xl mx-auto bg-white rounded-lg border border-slate-200 p-6 space-y-5">
+  <div>
+    <h2 class="text-lg font-semibold">Set up your hospital</h2>
+    <p class="text-sm text-slate-500">Enter your hospital's name and its wards. You can add more wards and beds later.</p>
+  </div>
+  <form id="wizard" class="space-y-4 text-sm">
+    <label class="block">Hospital name<input name="hospital" required class="mt-1 w-full border rounded px-2 py-1.5" placeholder="e.g. District Hospital, Cuttack"></label>
+    <div>
+      <div class="flex justify-between items-end mb-1"><span>Wards</span><button type="button" id="wiz-add" class="text-teal-700 hover:underline">+ Add ward</button></div>
+      <div id="wiz-wards" class="space-y-2"></div>
     </div>
-    <p class="text-xs text-slate-500 mb-4">Leave a field blank if it was not measured. Blank is sent as unknown (NaN), never as 0.</p>
-    <div id="fields" class="grid sm:grid-cols-2 gap-x-5 gap-y-3"></div>
-    <div class="mt-4 flex items-center justify-between text-sm">
-      <span>Mean arterial pressure (derived): <strong id="map-display" class="num">&mdash;</strong></span>
-      <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 font-medium" type="submit">Score patient</button>
-    </div>
-    <p id="form-error" class="text-sm text-red-700 mt-3 hidden"></p>
+    <p id="wiz-total" class="text-xs text-slate-500"></p>
+    <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 font-medium">Create hospital</button>
   </form>
+</section>
+{% endif %}
 
-  <div class="lg:col-span-2 space-y-4">
+<!-- ============ Overview ============ -->
+<section id="tab-overview" class="space-y-6 {{ 'hidden' if needs_setup }}">
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3" id="tiles"></div>
+  <div class="grid lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2 bg-white rounded-lg border border-slate-200 p-5">
+      <h2 class="font-semibold">Next 7 days</h2>
+      <p class="text-xs text-slate-500 mb-3">Beds expected to free up (from predicted length of stay) against admissions expected (from the admissions forecast). <span id="fc-source"></span></p>
+      <div class="h-72"><canvas id="forecast-chart"></canvas></div>
+    </div>
     <div class="bg-white rounded-lg border border-slate-200 p-5">
-      <h2 class="font-semibold mb-3">Risk estimate</h2>
-      <div id="result-empty" class="text-sm text-slate-500">Enter vitals or pick a preset, then score.</div>
-      <div id="result" class="hidden">
-        <div class="flex items-baseline gap-3">
-          <span id="risk-score" class="text-4xl font-semibold num"></span>
-          <span id="risk-tier" class="text-sm font-semibold px-2 py-0.5 rounded"></span>
-        </div>
-        <div class="mt-3 h-3 rounded-full relative bg-gradient-to-r from-emerald-500 via-amber-400 to-red-600">
-          <div id="risk-marker" class="absolute -top-1 w-1.5 h-5 bg-slate-900 rounded"></div>
-        </div>
-        <div class="flex justify-between text-[11px] text-slate-500 mt-1 num"><span>0</span><span>Low &lt; {{ low }}</span><span>High &ge; {{ high }}</span><span>1</span></div>
-        <p id="completeness" class="text-xs text-slate-600 mt-3"></p>
+      <h2 class="font-semibold mb-3">Occupancy by ward</h2>
+      <div id="ward-bars" class="space-y-3 text-sm"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Waiting list ============ -->
+<section id="tab-queue" class="hidden space-y-4">
+  <div class="bg-white rounded-lg border border-slate-200 p-5">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="font-semibold">Waiting list</h2>
+        <p class="text-xs text-slate-500">Sorted by priority = <span id="formula" class="num"></span></p>
+      </div>
+      <details class="text-sm">
+        <summary class="cursor-pointer text-teal-700">Change weights</summary>
+        <form id="weights" class="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <label>Urgency weight <input name="w_urgency" type="number" step="any" class="w-20 border rounded px-1"></label>
+          <label>Per day waited <input name="w_wait" type="number" step="any" class="w-20 border rounded px-1"></label>
+          <label>Admit-probability weight <input name="w_prob" type="number" step="any" class="w-20 border rounded px-1"></label>
+          <label>Max days counted <input name="wait_cap" type="number" step="any" class="w-20 border rounded px-1"></label>
+          <button class="col-span-2 bg-teal-700 text-white rounded px-2 py-1">Save</button>
+        </form>
+      </details>
+    </div>
+    <div class="overflow-x-auto mt-4">
+      <table class="w-full text-sm">
+        <thead class="text-left text-xs text-slate-500 border-b">
+          <tr><th class="py-2 pr-3">#</th><th class="pr-3">Patient</th><th class="pr-3">Reason</th><th class="pr-3">Ward</th><th class="pr-3">Type</th>
+              <th class="pr-3">Urgency</th><th class="pr-3 text-right">Admit prob.</th><th class="pr-3 text-right">Days waited</th><th class="pr-3 text-right">Priority</th><th></th></tr>
+        </thead>
+        <tbody id="queue-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <form id="add-patient" class="bg-white rounded-lg border border-slate-200 p-5 space-y-4 text-sm">
+    <h2 class="font-semibold">Add a patient</h2>
+    <div class="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      <label>Name<input name="name" required class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label>Age<input name="age" type="number" min="0" max="120" required class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label>Sex<select name="gender" class="mt-1 w-full border rounded px-2 py-1.5"><option>Male</option><option>Female</option></select></label>
+      <label>Lives in<select name="rural" class="mt-1 w-full border rounded px-2 py-1.5"><option value="0">Urban area</option><option value="1">Rural area</option></select></label>
+      <label>Admission type<select name="source" class="mt-1 w-full border rounded px-2 py-1.5"><option value="opd">Planned (OPD)</option><option value="emergency">Emergency</option></select></label>
+      <label>Ward<select name="ward" class="mt-1 w-full border rounded px-2 py-1.5">{% for w in wards %}<option>{{ w }}</option>{% endfor %}</select></label>
+      <label>Reason for admission<input name="condition" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label>Urgency<select name="urgency" class="mt-1 w-full border rounded px-2 py-1.5"><option value="1">Routine</option><option value="2">Soon</option><option value="3">Urgent</option></select></label>
+    </div>
+    <details class="border rounded p-3">
+      <summary class="cursor-pointer font-medium">Clinical details <span class="font-normal text-slate-500">(optional; makes the length-of-stay prediction more accurate)</span></summary>
+      <div class="mt-3 space-y-3">
+        <div><div class="text-xs text-slate-500 mb-1">History</div><div class="flex flex-wrap gap-x-4 gap-y-1">
+          {% for k, l in [("DM","Diabetes"),("HTN","Hypertension"),("CAD","Coronary artery disease"),("PRIOR CMP","Cardiomyopathy"),("CKD","Chronic kidney disease"),("SMOKING","Smoker"),("ALCOHOL","Alcohol")] %}
+          <label class="flex items-center gap-1"><input type="checkbox" data-flag="{{ k }}">{{ l }}</label>{% endfor %}</div></div>
+        <div><div class="text-xs text-slate-500 mb-1">Diagnosis on admission</div><div class="flex flex-wrap gap-x-4 gap-y-1">
+          {% for k, l in [("ACS","Acute coronary syndrome"),("STEMI","STEMI"),("HEART FAILURE","Heart failure"),("AF","Atrial fibrillation"),("VT","Ventricular tachycardia"),("CHB","Complete heart block"),("VALVULAR","Valve disease"),("STABLE ANGINA","Stable angina"),("ATYPICAL CHEST PAIN","Atypical chest pain"),("AKI","Acute kidney injury"),("CVA INFRACT","Stroke"),("CHEST INFECTION","Chest infection"),("UTI","Urinary tract infection"),("SEVERE ANAEMIA","Severe anaemia"),("SHOCK","Shock"),("CARDIOGENIC SHOCK","Cardiogenic shock")] %}
+          <label class="flex items-center gap-1"><input type="checkbox" data-flag="{{ k }}">{{ l }}</label>{% endfor %}</div></div>
+        <div><div class="text-xs text-slate-500 mb-1">Admission blood tests (leave blank if not done)</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {% for k, l in [("HB","Haemoglobin (g/dL)"),("TLC","White cells (×10³/µL)"),("PLATELETS","Platelets (×10³/µL)"),("GLUCOSE","Glucose (mg/dL)"),("UREA","Urea (mg/dL)"),("CREATININE","Creatinine (mg/dL)"),("BNP","BNP (pg/mL)"),("EF","Ejection fraction (%)")] %}
+          <label class="text-xs">{{ l }}<input type="number" step="any" data-lab="{{ k }}" class="mt-1 w-full border rounded px-2 py-1 text-sm"></label>{% endfor %}</div></div>
+      </div>
+    </details>
+    <div class="flex flex-wrap items-center gap-4">
+      <button name="action" value="queue" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-1.5">Add to waiting list</button>
+      <button name="action" value="admit" class="border border-teal-700 text-teal-700 hover:bg-teal-50 rounded px-4 py-1.5">Admit now to a free bed</button>
+    </div>
+  </form>
+</section>
+
+<!-- ============ Emergency intake ============ -->
+<section id="tab-intake" class="hidden grid lg:grid-cols-5 gap-6">
+  <form id="triage-form" class="lg:col-span-3 bg-white rounded-lg border border-slate-200 p-5 grid sm:grid-cols-2 gap-3 text-sm">
+    <div class="sm:col-span-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-semibold">Emergency triage</h2>
+      <div class="flex gap-1 text-xs">
+        <button type="button" class="preset border border-slate-300 rounded px-2 py-1 hover:bg-slate-100" data-preset="sick">Elderly, breathless</button>
+        <button type="button" class="preset border border-slate-300 rounded px-2 py-1 hover:bg-slate-100" data-preset="minor">Young, ankle injury</button>
       </div>
     </div>
-    <div id="guidance-card" class="bg-white rounded-lg border border-slate-200 p-5 hidden">
-      <h3 class="font-semibold mb-2 text-sm">Suggested next steps</h3>
-      <ul id="guidance" class="list-disc pl-5 text-sm space-y-1"></ul>
-    </div>
-    <div id="abnormal-card" class="bg-white rounded-lg border border-slate-200 p-5 hidden">
-      <h3 class="font-semibold mb-2 text-sm">Outside reference range</h3>
-      <div id="abnormal" class="flex flex-wrap gap-2"></div>
+    <p class="sm:col-span-2 text-xs text-slate-500">Only what a triage nurse knows at the door. Leave a vital blank if it was not measured.</p>
+    <label>Name<input name="name" class="mt-1 w-full border rounded px-2 py-1.5" placeholder="Name"></label>
+    <label>ESI level (1 most urgent)<select name="esi" class="mt-1 w-full border rounded px-2 py-1.5"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
+    <label>Age<input name="age" type="number" min="18" max="110" value="50" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Sex<select name="gender" class="mt-1 w-full border rounded px-2 py-1.5"><option>Male</option><option>Female</option></select></label>
+    <label>Arrival<select name="arrivalmode" class="mt-1 w-full border rounded px-2 py-1.5">{% for m in arrival_modes %}<option>{{ m }}</option>{% endfor %}</select></label>
+    <label>Chief complaint<select name="complaint" class="mt-1 w-full border rounded px-2 py-1.5"><option value="">(none of these)</option>{% for c in complaints %}<option value="{{ c }}">{{ c[3:] }}</option>{% endfor %}</select></label>
+    <label>Heart rate (/min)<input name="triage_vital_hr" type="number" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Breathing rate (/min)<input name="triage_vital_rr" type="number" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Systolic BP<input name="triage_vital_sbp" type="number" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Diastolic BP<input name="triage_vital_dbp" type="number" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Oxygen saturation (%)<input name="triage_vital_o2" type="number" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Temperature (&deg;F)<input name="triage_vital_temp" type="number" step="0.1" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>ED visits in last year<input name="n_edvisits" type="number" min="0" value="0" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Admissions in last year<input name="n_admissions" type="number" min="0" value="0" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+    <label>Ward if admitted<select name="ward" class="mt-1 w-full border rounded px-2 py-1.5">{% for w in wards %}<option>{{ w }}</option>{% endfor %}</select></label>
+    <div class="sm:col-span-2"><button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 font-medium">Predict admission</button></div>
+  </form>
+  <div class="lg:col-span-2 bg-white rounded-lg border border-slate-200 p-5">
+    <h2 class="font-semibold mb-3">Result</h2>
+    <div id="triage-empty" class="text-sm text-slate-500">Fill the form or pick an example, then predict.</div>
+    <div id="triage-result" class="hidden space-y-4 text-sm">
+      <div><div class="text-4xl font-semibold num" id="t-prob"></div><div class="text-slate-500" id="t-band"></div></div>
+      <div><h3 class="font-medium mb-1">Why</h3><ul id="t-reasons" class="space-y-1"></ul></div>
+      <p class="text-xs text-slate-500" id="t-source"></p>
+      <button id="t-add" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2">Add to waiting list</button>
     </div>
   </div>
 </section>
 
-<!-- ============ Tab 2: metrics ============ -->
-<section id="tab-metrics" class="hidden space-y-6">
-  <div class="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-lg p-4">
-    These numbers come from <strong>synthetic</strong> patients, not PhysioNet. They show the pipeline working end to end
-    and how the risk tiers behave; they do not reproduce the model card's held-out results (AUROC 0.770, AUPRC 0.0825).
-    The generator shifts vitals in exactly the patterns SIRS and NEWS2 check for, so those rules can score unrealistically well here.
+<!-- ============ Bed board ============ -->
+<section id="tab-beds" class="hidden space-y-6">
+  <div class="flex flex-wrap gap-4 text-xs">
+    <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-emerald-100 border border-emerald-400"></span>Free</span>
+    <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-amber-100 border border-amber-400"></span>Expected to free within 1 day</span>
+    <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-slate-100 border border-slate-300"></span>Occupied</span>
   </div>
-  <div id="kpis" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
-  <div class="grid md:grid-cols-2 gap-6">
-    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">ROC curve</h3><div class="h-64"><canvas id="roc-chart"></canvas></div></div>
-    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Precision–recall curve</h3><div class="h-64"><canvas id="pr-chart"></canvas></div></div>
-    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Observed sepsis rate by risk tier</h3><div class="h-64"><canvas id="tier-chart"></canvas></div></div>
-    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Score distribution</h3><div class="h-64"><canvas id="hist-chart"></canvas></div></div>
-  </div>
-  <div class="grid md:grid-cols-2 gap-6">
-    <div class="bg-white rounded-lg border border-slate-200 p-5 overflow-x-auto"><h3 class="font-semibold text-sm mb-3">Confusion matrices</h3><div id="confusion" class="grid sm:grid-cols-2 gap-4"></div></div>
-    <div class="bg-white rounded-lg border border-slate-200 p-5 overflow-x-auto"><h3 class="font-semibold text-sm mb-3">Against bedside rules (same columns)</h3><table id="baselines" class="w-full text-sm num"></table></div>
-  </div>
-  <div class="grid md:grid-cols-2 gap-6">
-    <div class="bg-white rounded-lg border border-slate-200 p-5 overflow-x-auto"><h3 class="font-semibold text-sm mb-3">By facility profile</h3><table id="facilities" class="w-full text-sm num"></table></div>
-    <div class="bg-white rounded-lg border border-slate-200 p-5"><h3 class="font-semibold text-sm mb-3">Patient-level alarms</h3><div id="alarms" class="text-sm space-y-1"></div></div>
+  <div id="wards" class="space-y-6"></div>
+  <div id="bed-detail" class="hidden fixed inset-0 bg-black/30 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg p-5 w-full max-w-md text-sm space-y-2" id="bed-detail-body"></div>
   </div>
 </section>
 
-<!-- ============ Tab 3: data ============ -->
-<section id="tab-data" class="hidden space-y-6">
-  <div class="bg-white rounded-lg border border-slate-200 p-5 flex flex-wrap items-end gap-4">
-    <label class="text-sm">Patients<input id="gen-patients" type="number" min="50" max="5000" value="400" class="block mt-1 w-28 border border-slate-300 rounded px-2 py-1"></label>
-    <label class="text-sm">Seed<input id="gen-seed" type="number" value="42" class="block mt-1 w-24 border border-slate-300 rounded px-2 py-1"></label>
-    <button id="gen-btn" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 text-sm font-medium">Regenerate &amp; re-evaluate</button>
-    <label class="text-sm ml-auto">Show
-      <select id="label-filter" class="block mt-1 border border-slate-300 rounded px-2 py-1">
-        <option value="">All rows</option><option value="1">Septic hours only</option><option value="0">Non-septic hours only</option>
-      </select>
-    </label>
-    <span id="gen-status" class="text-sm text-slate-500 w-full"></span>
+<!-- ============ Model report ============ -->
+<section id="tab-report" class="hidden space-y-6">
+  <div id="report-cards" class="grid lg:grid-cols-3 gap-6"></div>
+  <div class="grid lg:grid-cols-2 gap-6">
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold mb-2">Triage model: ROC curve</h2><div class="h-64"><canvas id="roc-chart"></canvas></div></div>
+    <div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold mb-2">Triage model: top inputs</h2><div class="h-64"><canvas id="feat-chart"></canvas></div></div>
   </div>
-  <div id="cohort" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+  <div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold">Admissions forecast on the test months</h2>
+    <p class="text-xs text-slate-500 mb-2">Daily admissions at Hero DMC Heart Institute, Ludhiana, Dec 2018 to Mar 2019: actual against our next-day forecast.</p>
+    <div class="h-72"><canvas id="fc-test-chart"></canvas></div></div>
+</section>
+{% if live %}
+<!-- ============ Wards & beds (hospital version) ============ -->
+<section id="tab-setup" class="hidden space-y-6">
   <div class="bg-white rounded-lg border border-slate-200 p-5">
-    <h3 class="font-semibold text-sm mb-1">Sample rows</h3>
-    <p class="text-xs text-slate-500 mb-3">Click a row to load it into the triage form. Blank cells were never measured.</p>
-    <div class="overflow-auto max-h-[480px]"><table id="data-table" class="w-full text-xs num"></table></div>
+    <h2 class="font-semibold mb-3">Wards</h2>
+    <table class="w-full text-sm"><thead class="text-left text-xs text-slate-500 border-b"><tr><th class="py-2">Ward</th><th class="text-right">Beds</th><th class="text-right">Occupied</th><th class="text-right">Add beds</th></tr></thead>
+      <tbody id="ward-body"></tbody></table>
   </div>
+  <form id="add-ward" class="bg-white rounded-lg border border-slate-200 p-5 flex flex-wrap items-end gap-3 text-sm">
+    <label>New ward name<input name="name" required class="mt-1 block border rounded px-2 py-1.5"></label>
+    <label>Beds<input name="beds" type="number" min="1" max="500" value="10" required class="mt-1 block w-24 border rounded px-2 py-1.5"></label>
+    <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-1.5">Add ward</button>
+  </form>
+  <p class="text-xs text-slate-500">The length-of-stay and admissions models were trained on a heart hospital in Ludhiana; retrain them on your own records for best results (see the README).</p>
 </section>
+{% endif %}
 </main>
 
 <script>
-const FEATURES = {{ features | tojson }};
-const NORMAL = {{ normal | tojson }};
-const LOW = {{ low }}, HIGH = {{ high }};
-const META = {
-  age: ["Age", "years"], hoursSinceAdmission: ["Hours since admission", "h"], HR: ["Heart rate", "bpm"],
-  Temp: ["Temperature", "°C"], Resp: ["Respiratory rate", "/min"], SBP: ["Systolic BP", "mmHg"],
-  DBP: ["Diastolic BP", "mmHg"], O2Sat: ["SpO₂", "%"], EtCO2: ["EtCO₂", "mmHg"],
-};
-const PRESETS = {
-  normal:      {age: 45, hoursSinceAdmission: 12, HR: 78, Temp: 36.8, Resp: 15, SBP: 122, DBP: 78, O2Sat: 98, EtCO2: 38},
-  shock:       {age: 65, hoursSinceAdmission: 10, HR: 126, Temp: 38.9, Resp: 28, SBP: 88, DBP: 52, O2Sat: 90},
-  minimal:     {age: 58, hoursSinceAdmission: 20, HR: 108, Temp: 38.6, Resp: 24, SBP: 104, DBP: 66},
-  hypothermic: {age: 82, hoursSinceAdmission: 30, HR: 112, Temp: 35.4, Resp: 26, SBP: 92, DBP: 54, O2Sat: 91},
-  clear: {},
-};
-const TIER_STYLE = {Low: "bg-emerald-100 text-emerald-800", Medium: "bg-amber-100 text-amber-800", High: "bg-red-100 text-red-800"};
-const fmt = (v, d = 3) => v === null || v === undefined ? "—" : Number(v).toFixed(d);
-const pct = (v, d = 1) => v === null || v === undefined ? "—" : (v * 100).toFixed(d) + "%";
-const $ = id => document.getElementById(id);
+const $ = s => document.querySelector(s);
+const fmtDate = s => new Date(s + "T00:00").toLocaleDateString(undefined, {day: "numeric", month: "short"});
+const pct = x => (x * 100).toFixed(0) + "%";
+const esc = x => String(x ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+const URG = {1: "Routine", 2: "Soon", 3: "Urgent"};
+const URG_CLS = {1: "bg-slate-100 text-slate-700", 2: "bg-amber-100 text-amber-800", 3: "bg-red-100 text-red-800"};
+let charts = {}, lastTriage = null;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts});
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden"); setTimeout(() => t.classList.add("hidden"), 2500); }
+function chart(id, cfg) { charts[id]?.destroy(); charts[id] = new Chart(document.getElementById(id), cfg); }
 
 // ---------- tabs ----------
-let metricsLoaded = false, dataLoaded = false;
-document.querySelectorAll(".tab-btn").forEach(btn => btn.addEventListener("click", () => {
-  document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", b === btn));
-  ["triage", "metrics", "data"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== btn.dataset.tab));
-  if (btn.dataset.tab === "metrics" && !metricsLoaded) loadMetrics();
-  if (btn.dataset.tab === "data" && !dataLoaded) loadData();
-}));
+const LIVE = {{ "true" if live else "false" }}, NEEDS_SETUP = {{ "true" if needs_setup else "false" }};
+const loaders = {overview: loadOverview, queue: loadQueue, beds: loadBeds, report: loadReport, intake: () => {}, setup: loadWards};
+let current = "overview";
+document.querySelectorAll(".tab-btn").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tab-btn").forEach(x => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll("main > section").forEach(s => s.classList.add("hidden"));
+  current = b.dataset.tab; $("#tab-" + current).classList.remove("hidden"); loaders[current]();
+});
+const refresh = () => loaders[current]();
 
-// ---------- triage form ----------
-$("fields").innerHTML = FEATURES.map(f => {
-  const [label, unit] = META[f], ref = NORMAL[f] ? `normal ${NORMAL[f][0]}–${NORMAL[f][1]}` : "";
-  return `<label class="text-sm"><span class="flex justify-between"><span>${label} <span class="text-slate-400">${unit}</span></span><span class="text-[11px] text-slate-400">${ref}</span></span>
-    <input name="${f}" type="number" step="any" placeholder="not measured" class="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 num focus:outline-none focus:ring-2 focus:ring-teal-600"></label>`;
-}).join("");
-
-const form = $("vitals-form");
-function readForm() {
-  const out = {};
-  FEATURES.forEach(f => { const v = form.elements[f].value.trim(); out[f] = v === "" ? null : Number(v); });
-  return out;
+// ---------- overview ----------
+function tile(label, value, sub, cls = "") {
+  return `<div class="bg-white rounded-lg border border-slate-200 p-4 ${cls}"><div class="text-xs text-slate-500">${label}</div>
+    <div class="text-2xl font-semibold num">${value}</div><div class="text-xs text-slate-500">${sub}</div></div>`;
 }
-function updateMap() {
-  const {SBP, DBP} = readForm();
-  $("map-display").textContent = SBP !== null && DBP !== null ? (DBP + (SBP - DBP) / 3).toFixed(1) + " mmHg" : "—";
-}
-form.addEventListener("input", updateMap);
-function fillForm(values) {
-  FEATURES.forEach(f => form.elements[f].value = values[f] ?? "");
-  updateMap();
-}
-document.querySelectorAll(".preset").forEach(b => b.addEventListener("click", () => {
-  fillForm(PRESETS[b.dataset.preset]);
-  if (b.dataset.preset !== "clear") form.requestSubmit(); else showResult(null);
-}));
-
-function showResult(r) {
-  ["result", "guidance-card", "abnormal-card"].forEach(id => $(id).classList.toggle("hidden", !r));
-  $("result-empty").classList.toggle("hidden", !!r);
-  if (!r) return;
-  $("risk-score").textContent = r.riskScore.toFixed(3);
-  $("risk-tier").textContent = r.tier.toUpperCase();
-  $("risk-tier").className = "text-sm font-semibold px-2 py-0.5 rounded " + TIER_STYLE[r.tier];
-  $("risk-marker").style.left = `calc(${r.riskScore * 100}% - 3px)`;
-  const c = r.completeness;
-  $("completeness").textContent = `Based on ${c.measured.length} of 7 vitals.` + (c.missing.length ? ` Not measured: ${c.missing.join(", ")}.` : "");
-  $("guidance").innerHTML = r.guidance.map(g => `<li>${g}</li>`).join("");
-  $("abnormal-card").classList.toggle("hidden", !r.abnormal.length);
-  $("abnormal").innerHTML = r.abnormal.map(a =>
-    `<span class="text-xs px-2 py-1 rounded ${a.direction === "high" ? "bg-red-50 text-red-800" : "bg-sky-50 text-sky-800"}">${a.feature} ${a.value} ${a.direction === "high" ? "▲" : "▼"}</span>`).join("");
+async function loadOverview() {
+  const o = await api("/api/overview");
+  $("#today").textContent = fmtDate(o.today);
+  const gap = o.tomorrow.bed_gap;
+  $("#tiles").innerHTML =
+    tile("Beds occupied", `${o.beds_occupied}/${o.beds_total}`, `${o.beds_free} free now`) +
+    tile("Waiting list", o.waiting, "patients waiting for a bed") +
+    tile("Discharges tomorrow", o.tomorrow.discharges, "predicted from length of stay") +
+    tile("Admissions tomorrow", o.tomorrow.admissions, "forecast") +
+    tile("Bed gap tomorrow", (gap > 0 ? "+" : "") + gap, gap >= 0 ? "spare beds expected" : "beds short", gap >= 0 ? "border-emerald-300" : "border-red-300 bg-red-50");
+  $("#fc-source").textContent = o.forecast_source === "model" ? "Weekly and yearly pattern learned from 15,757 Ludhiana admissions, scaled to this hospital." : "Forecast is using a placeholder until the Ludhiana model is trained.";
+  chart("forecast-chart", {type: "bar", data: {labels: o.forecast.map(d => fmtDate(d.day)), datasets: [
+      {label: "Beds free (before admissions)", data: o.forecast.map(d => d.beds_free_before_admissions), backgroundColor: "#99f6e4"},
+      {label: "Expected admissions", data: o.forecast.map(d => d.expected_admissions), type: "line", borderColor: "#b91c1c", backgroundColor: "#b91c1c"}]},
+    options: {maintainAspectRatio: false, scales: {y: {beginAtZero: true, title: {display: true, text: "beds / patients"}}}}});
+  $("#ward-bars").innerHTML = o.by_ward.map(w => `<div><div class="flex justify-between"><span>${esc(w.ward)}</span><span class="num">${w.occupied}/${w.total}</span></div>
+    <div class="h-2 bg-slate-100 rounded mt-1"><div class="h-2 rounded ${w.occupied / w.total > 0.9 ? "bg-red-500" : "bg-teal-600"}" style="width:${100 * w.occupied / w.total}%"></div></div></div>`).join("");
 }
 
-form.addEventListener("submit", async e => {
-  e.preventDefault();
-  $("form-error").classList.add("hidden");
-  const res = await fetch("/api/predict", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(readForm())});
-  const body = await res.json();
-  if (!res.ok) {
-    $("form-error").textContent = Object.entries(body.errors).map(([k, v]) => k === "_" ? v : `${META[k][0]}: ${v}`).join(" · ");
-    $("form-error").classList.remove("hidden");
-    showResult(null);
-    return;
+// ---------- waiting list ----------
+async function loadQueue() {
+  const {queue, settings} = await api("/api/queue");
+  const s = settings;
+  $("#formula").textContent = `${s.w_urgency} × urgency + ${s.w_wait} × days waited (max ${s.wait_cap}) + ${s.w_prob} × admit probability`;
+  for (const k of ["w_urgency", "w_wait", "w_prob", "wait_cap"]) $("#weights")[k].value = s[k];
+  $("#queue-body").innerHTML = queue.map(p => `<tr class="border-b last:border-0">
+    <td class="py-2 pr-3 num">${p.rank}</td>
+    <td class="pr-3"><div class="font-medium">${esc(p.name)}</div><div class="text-xs text-slate-500">${p.age ?? ""} ${p.gender ?? ""}</div></td>
+    <td class="pr-3">${esc(p.condition)}</td><td class="pr-3">${esc(p.ward)}</td>
+    <td class="pr-3">${p.source === "emergency" ? "Emergency" : "Planned"}</td>
+    <td class="pr-3"><select data-urg="${p.id}" class="text-xs rounded px-1 py-0.5 ${URG_CLS[p.urgency]}">${[1, 2, 3].map(u => `<option value="${u}" ${u === p.urgency ? "selected" : ""}>${URG[u]}</option>`).join("")}</select></td>
+    <td class="pr-3 text-right num">${p.admit_prob == null ? "&ndash;" : pct(p.admit_prob)}</td>
+    <td class="pr-3 text-right num">${p.days_waited}</td>
+    <td class="pr-3 text-right num font-semibold">${p.priority}</td>
+    <td class="text-right whitespace-nowrap"><button data-admit="${p.id}" class="text-teal-700 hover:underline">Admit</button>
+      <button data-remove="${p.id}" class="ml-2 text-slate-400 hover:text-red-700" title="Remove from the list">✕</button></td></tr>`).join("")
+    || `<tr><td colspan="10" class="py-6 text-center text-slate-500">Nobody is waiting.</td></tr>`;
+  document.querySelectorAll("[data-admit]").forEach(b => b.onclick = async () => {
+    try { const r = await api(`/api/queue/${b.dataset.admit}/admit`, {method: "POST", body: "{}"});
+      toast(`Admitted. Expected stay ${r.los_p50} days (up to ${r.los_p90}).`); loadQueue();
+    } catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
+    if (!confirm("Remove this patient from the waiting list?")) return;
+    await api(`/api/queue/${b.dataset.remove}/remove`, {method: "POST"}); toast("Removed from the list."); loadQueue();
+  });
+  document.querySelectorAll("[data-urg]").forEach(sel => sel.onchange = async () => {
+    await api(`/api/queue/${sel.dataset.urg}/urgency`, {method: "POST", body: JSON.stringify({urgency: +sel.value})}); loadQueue();
+  });
+}
+$("#weights").onsubmit = async e => { e.preventDefault();
+  await api("/api/settings", {method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target)))}); loadQueue(); };
+$("#add-patient").onsubmit = async e => { e.preventDefault();
+  const f = e.target, d = Object.fromEntries(new FormData(f));
+  const clinical = {rural: +d.rural};
+  f.querySelectorAll("[data-flag]").forEach(c => clinical[c.dataset.flag] = c.checked ? 1 : 0);
+  f.querySelectorAll("[data-lab]").forEach(i => { if (i.value !== "") clinical[i.dataset.lab] = +i.value; });
+  const body = {name: d.name, age: +d.age, gender: d.gender, source: d.source, ward: d.ward, condition: d.condition,
+                urgency: +d.urgency, clinical, admit_now: e.submitter?.value === "admit"};
+  try {
+    const r = await api("/api/queue", {method: "POST", body: JSON.stringify(body)});
+    toast(r.admit_error ? `Added to the waiting list: ${r.admit_error}.` : body.admit_now ? `Admitted. Expected stay ${r.los_p50} days (up to ${r.los_p90}).` : "Added to the waiting list.");
+    f.reset(); loadQueue();
+  } catch (err) { toast(err.message); }
+};
+
+// ---------- emergency intake ----------
+const PRESETS = {
+  sick: {esi: 2, age: 78, gender: "Female", arrivalmode: "ambulance", complaint: "cc_shortnessofbreath", triage_vital_hr: 118, triage_vital_rr: 28,
+         triage_vital_sbp: 98, triage_vital_dbp: 60, triage_vital_o2: 89, triage_vital_temp: 100.9, n_edvisits: 3, n_admissions: 2, name: "Lakshmi Rao", ward: "General Medicine"},
+  minor: {esi: 4, age: 24, gender: "Male", arrivalmode: "Walk-in", complaint: "cc_anklepain", triage_vital_hr: 82, triage_vital_rr: 16,
+          triage_vital_sbp: 124, triage_vital_dbp: 78, triage_vital_o2: 99, triage_vital_temp: 98.4, n_edvisits: 0, n_admissions: 0, name: "Rohan Das", ward: "Surgery"},
+};
+document.querySelectorAll(".preset").forEach(b => b.onclick = () => {
+  const f = $("#triage-form"), p = PRESETS[b.dataset.preset];
+  for (const [k, v] of Object.entries(p)) if (f[k]) f[k].value = v;
+});
+function triageValues() {
+  const d = Object.fromEntries(new FormData($("#triage-form")));
+  const v = {};
+  for (const [k, x] of Object.entries(d)) if (!["name", "complaint", "ward"].includes(k) && x !== "") v[k] = x;
+  if (d.complaint) v[d.complaint] = 1;
+  return {values: v, name: d.name || "Unnamed patient", ward: d.ward, complaint: d.complaint};
+}
+$("#triage-form").onsubmit = async e => { e.preventDefault();
+  const t = triageValues();
+  try {
+    const r = await api("/api/triage", {method: "POST", body: JSON.stringify(t.values)});
+    lastTriage = {...t, result: r};
+    $("#triage-empty").classList.add("hidden"); $("#triage-result").classList.remove("hidden");
+    $("#t-prob").textContent = pct(r.probability);
+    $("#t-band").textContent = r.probability >= 0.6 ? "Admission likely: hold a bed" : r.probability >= 0.3 ? "Possible admission: reassess" : "Admission unlikely";
+    $("#t-prob").className = "text-4xl font-semibold num " + (r.probability >= 0.6 ? "text-red-700" : r.probability >= 0.3 ? "text-amber-700" : "text-emerald-700");
+    $("#t-reasons").innerHTML = r.reasons.map(x => `<li><span class="${x.effect === "raises" ? "text-red-700" : "text-emerald-700"}">${x.effect === "raises" ? "▲" : "▼"}</span>
+      ${x.label}${x.value != null && !x.feature.startsWith("cc_") ? ` (${x.value})` : ""} <span class="text-slate-500">${x.effect} the chance</span></li>`).join("") || "<li class='text-slate-500'>No explanation available.</li>";
+    $("#t-source").textContent = r.source === "model" ? "Model trained on 560,486 emergency visits (Yale, Hong et al. 2018)." : "Using " + r.source + ".";
+  } catch (err) { toast(err.message); }
+};
+$("#t-add").onclick = async () => {
+  if (!lastTriage) return;
+  const v = lastTriage.values;
+  await api("/api/queue", {method: "POST", body: JSON.stringify({name: lastTriage.name, age: +v.age, gender: v.gender, source: "emergency",
+    ward: lastTriage.ward, condition: lastTriage.complaint ? lastTriage.complaint.slice(3) : "Emergency", urgency: lastTriage.result.suggested_urgency,
+    admit_prob: lastTriage.result.probability, clinical: v})});
+  toast("Added to the waiting list.");
+};
+
+// ---------- bed board ----------
+async function loadBeds() {
+  const beds = await api("/api/beds");
+  const wards = {};
+  beds.forEach(b => (wards[b.ward] ??= []).push(b));
+  $("#wards").innerHTML = Object.entries(wards).map(([w, list]) => `<div class="bg-white rounded-lg border border-slate-200 p-5">
+    <h2 class="font-semibold mb-3">${esc(w)} <span class="text-sm font-normal text-slate-500">${list.filter(b => b.patient).length}/${list.length} occupied</span></h2>
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-10 gap-2">${list.map(b => {
+      const cls = b.status === "free" ? "bg-emerald-50 border-emerald-300" : b.status === "freeing" ? "bg-amber-50 border-amber-400" : "bg-slate-50 border-slate-300";
+      const p = b.patient;
+      return `<button data-bed="${b.bed_id}" class="bed text-left border rounded p-2 text-xs ${cls} hover:shadow">
+        <div class="font-semibold">${esc(b.label)}</div>${p ? `<div class="truncate">${esc(p.name)}</div><div class="text-slate-500">${p.days_left < 0 ? "overdue" : "out ~" + fmtDate(p.expected_discharge)}</div>` : `<div class="text-emerald-700">Free</div>`}</button>`;
+    }).join("")}</div></div>`).join("");
+  document.querySelectorAll("[data-bed]").forEach(el => el.onclick = () => {
+    const b = beds.find(x => x.bed_id === +el.dataset.bed);
+    if (!b.patient) return toast("This bed is free. Admit someone from the waiting list.");
+    const p = b.patient;
+    $("#bed-detail-body").innerHTML = `<div class="flex justify-between"><h3 class="font-semibold">${esc(b.label)} · ${esc(p.name)}</h3><button id="close-bed" class="text-slate-500">✕</button></div>
+      <p>${p.age} ${p.gender} · ${esc(p.condition)} · ${p.source === "emergency" ? "Emergency" : "Planned"} admission</p>
+      <p>Admitted ${fmtDate(p.admitted_on)} (day ${p.days_in + 1})</p>
+      <p><strong>Expected discharge ${fmtDate(p.expected_discharge)}</strong>, could be as late as ${fmtDate(p.latest_discharge)}</p>
+      <p class="text-xs text-slate-500">Predicted stay ${p.los_p50} days (likely), ${p.los_p90} days (90% of similar patients leave by then).</p>
+      <button id="discharge" class="bg-teal-700 text-white rounded px-3 py-1.5">Discharge and free bed</button>`;
+    $("#bed-detail").classList.remove("hidden");
+    $("#close-bed").onclick = () => $("#bed-detail").classList.add("hidden");
+    $("#discharge").onclick = async () => { await api(`/api/beds/${b.bed_id}/discharge`, {method: "POST"});
+      $("#bed-detail").classList.add("hidden"); toast("Bed freed."); loadBeds(); };
+  });
+}
+$("#bed-detail").onclick = e => { if (e.target.id === "bed-detail") e.target.classList.add("hidden"); };
+
+// ---------- model report ----------
+function card(title, rows, note) {
+  return `<div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold mb-2">${title}</h2>
+    <table class="w-full text-sm">${rows.map(r => `<tr class="border-b last:border-0"><td class="py-1.5 pr-2">${r[0]}</td><td class="text-right num font-medium">${r[1]}</td></tr>`).join("")}</table>
+    <p class="text-xs text-slate-500 mt-2">${note}</p></div>`;
+}
+async function loadReport() {
+  const m = await api("/api/metrics");
+  const t = m.triage_admit, l = m.los, a = m.admissions;
+  const f3 = x => x == null ? "–" : (+x).toFixed(3);
+  $("#report-cards").innerHTML =
+    (t ? card("Triage admission (Yale)", [["AUROC, our model", f3(t.auroc.model)], ["AUROC, ESI level alone", f3(t.auroc.esi_only)],
+      ["AUROC, logistic regression", f3(t.auroc.logistic_regression)], ["AUROC on an ED never seen in training", f3(t.unseen_site_C.auroc)],
+      ["Test visits", t.n_test.toLocaleString()]], "ESI alone is what triage nurses use today; the model has to beat it.")
+       : card("Triage admission", [], "Not trained yet: run python training/m2_triage.py")) +
+    (l ? card("Length of stay (Ludhiana)", Object.entries(l.summary).map(([k, v]) => [k, v]), l.note || "")
+       : card("Length of stay", [], "Not trained yet: run python training/m3_los.py")) +
+    (a ? card("Admissions forecast (Ludhiana)", Object.entries(a.summary).map(([k, v]) => [k, v]), a.note || "")
+       : card("Admissions forecast", [], "Not trained yet: run python training/m1_admissions.py"));
+  if (t) {
+    chart("roc-chart", {type: "line", data: {datasets: [{label: "Model", data: t.roc_curve.map(([x, y]) => ({x, y})), borderColor: "#0f766e", pointRadius: 0},
+      {label: "Chance", data: [{x: 0, y: 0}, {x: 1, y: 1}], borderColor: "#cbd5e1", borderDash: [4, 4], pointRadius: 0}]},
+      options: {maintainAspectRatio: false, scales: {x: {type: "linear", min: 0, max: 1, title: {display: true, text: "False positive rate"}},
+        y: {min: 0, max: 1, title: {display: true, text: "True positive rate"}}}}});
+    chart("feat-chart", {type: "bar", data: {labels: t.top_features.slice(0, 10).map(f => f[0].replace("triage_vital_", "").replace("cc_", "complaint: ")),
+      datasets: [{label: "Share of model gain", data: t.top_features.slice(0, 10).map(f => f[1]), backgroundColor: "#0f766e"}]},
+      options: {indexAxis: "y", maintainAspectRatio: false, plugins: {legend: {display: false}}}});
   }
-  showResult(body);
-});
-
-// ---------- metrics ----------
-const charts = {};
-function chart(id, config) { charts[id]?.destroy(); charts[id] = new Chart($(id), config); }
-const axis = (title, max = 1) => ({title: {display: true, text: title}, min: 0, max, ticks: {maxTicksLimit: 6}});
-
-async function loadMetrics() {
-  const m = await (await fetch("/api/metrics")).json();
-  metricsLoaded = true;
-  renderMetrics(m);
-}
-function kpi(label, value, sub = "") {
-  return `<div class="bg-white rounded-lg border border-slate-200 p-4"><div class="text-xs text-slate-500">${label}</div><div class="text-2xl font-semibold num">${value}</div><div class="text-xs text-slate-500">${sub}</div></div>`;
-}
-function renderMetrics(m) {
-  const s = m.summary;
-  $("kpis").innerHTML = kpi("AUROC", fmt(s.auroc)) + kpi("AUPRC", fmt(s.auprc), `${fmt(s.lift, 1)}× over base rate`)
-    + kpi("Base rate", pct(s.positive_rate), `${s.rows.toLocaleString()} patient-hours`)
-    + kpi("Septic patients", s.septic_patients, `of ${s.patients}`);
-
-  const line = (pts, color, label) => ({label, data: pts.x.map((x, i) => ({x, y: pts.y[i]})), borderColor: color, pointRadius: 0, borderWidth: 2, showLine: true});
-  const common = {responsive: true, maintainAspectRatio: false, animation: false};
-  chart("roc-chart", {type: "scatter", data: {datasets: [line(m.roc, "#0f766e", "Model"),
-      {label: "Chance", data: [{x: 0, y: 0}, {x: 1, y: 1}], borderColor: "#cbd5e1", borderDash: [4, 4], pointRadius: 0, showLine: true}]},
-    options: {...common, scales: {x: axis("False positive rate"), y: axis("True positive rate")}}});
-  chart("pr-chart", {type: "scatter", data: {datasets: [line(m.pr, "#0f766e", "Model"),
-      {label: "Base rate", data: [{x: 0, y: s.positive_rate}, {x: 1, y: s.positive_rate}], borderColor: "#cbd5e1", borderDash: [4, 4], pointRadius: 0, showLine: true}]},
-    options: {...common, scales: {x: axis("Recall"), y: axis("Precision")}}});
-  chart("tier-chart", {type: "bar", data: {labels: m.tiers.map(t => `${t.tier} (n=${t.n})`),
-      datasets: [{label: "Observed sepsis rate", data: m.tiers.map(t => (t.observed_rate ?? 0) * 100), backgroundColor: ["#10b981", "#f59e0b", "#dc2626"]}]},
-    options: {...common, plugins: {legend: {display: false}}, scales: {y: {title: {display: true, text: "% of hours septic within 6 h"}, beginAtZero: true}}}});
-  const h = m.score_histogram, labels = h.bins.slice(0, -1).map(b => b.toFixed(2));
-  const norm = arr => { const t = arr.reduce((a, b) => a + b, 0) || 1; return arr.map(v => v / t * 100); };
-  chart("hist-chart", {type: "bar", data: {labels, datasets: [
-      {label: "Non-septic hours", data: norm(h.non_septic), backgroundColor: "#94a3b8"},
-      {label: "Septic hours", data: norm(h.septic), backgroundColor: "#dc2626"}]},
-    options: {...common, scales: {x: {title: {display: true, text: "riskScore"}}, y: {title: {display: true, text: "% of group"}}}}});
-
-  $("confusion").innerHTML = m.confusion.map(c => `
-    <div><div class="text-xs text-slate-500 mb-1">Alarm at score ≥ ${c.threshold}</div>
-    <table class="w-full text-center text-sm num border border-slate-200"><tr class="bg-slate-50"><td></td><td class="p-1">Pred +</td><td class="p-1">Pred −</td></tr>
-      <tr><td class="p-1 bg-slate-50">Actual +</td><td class="p-1 bg-emerald-50">${c.tp}</td><td class="p-1 bg-red-50">${c.fn}</td></tr>
-      <tr><td class="p-1 bg-slate-50">Actual −</td><td class="p-1 bg-red-50">${c.fp}</td><td class="p-1 bg-emerald-50">${c.tn}</td></tr></table>
-    <div class="text-xs mt-2 grid grid-cols-2 gap-x-2">
-      <span>Sensitivity ${pct(c.sensitivity)}</span><span>Specificity ${pct(c.specificity)}</span>
-      <span>PPV ${pct(c.ppv)}</span><span>NPV ${pct(c.npv)}</span><span>F1 ${fmt(c.f1)}</span></div></div>`).join("");
-
-  $("baselines").innerHTML = `<tr class="text-left text-slate-500"><th class="pb-2">Model</th><th>AUPRC</th><th>Lift</th><th>AUROC</th></tr>` +
-    m.baselines.map(b => `<tr class="border-t border-slate-100 ${b.model === "This model" ? "font-semibold" : ""}"><td class="py-1.5">${b.model}</td><td>${fmt(b.auprc)}</td><td>${fmt(b.lift, 1)}×</td><td>${fmt(b.auroc)}</td></tr>`).join("");
-  $("facilities").innerHTML = `<tr class="text-left text-slate-500"><th class="pb-2">Profile</th><th>Patients</th><th>Septic</th><th>AUROC</th><th>Sens. ≥${HIGH}</th></tr>` +
-    m.facilities.map(f => `<tr class="border-t border-slate-100"><td class="py-1.5">${f.facility.replaceAll("_", " ")}</td><td>${f.patients}</td><td>${f.septic_patients}</td><td>${fmt(f.auroc)}</td><td>${pct(f.sensitivity, 0)}</td></tr>`).join("");
-  const a = m.alarms;
-  $("alarms").innerHTML = `
-    <p><strong class="num">${a.alarmed_before_onset} of ${a.septic_patients}</strong> septic patients reached the High tier before onset.</p>
-    <p>Median lead time: <strong class="num">${a.median_lead_hours ?? "—"} h</strong> before onset.</p>
-    <p><strong class="num">${a.controls_ever_alarmed} of ${a.control_patients}</strong> non-septic patients reached High at least once during their stay.</p>`;
+  if (a) {
+    const ts = a.test_series;
+    chart("fc-test-chart", {type: "line", data: {labels: ts.map(r => fmtDate(r[0])), datasets: [
+      {label: "Actual admissions", data: ts.map(r => r[1]), borderColor: "#94a3b8", backgroundColor: "#94a3b8", pointRadius: 0, borderWidth: 1.5},
+      {label: "Forecast", data: ts.map(r => r[2]), borderColor: "#0f766e", backgroundColor: "#0f766e", pointRadius: 0, borderWidth: 2}]},
+      options: {maintainAspectRatio: false, scales: {y: {beginAtZero: true, title: {display: true, text: "admissions per day"}}, x: {ticks: {maxTicksLimit: 12}}}}});
+  }
 }
 
-// ---------- data explorer ----------
-async function loadData() {
-  dataLoaded = true;
-  const [rows, m] = await Promise.all([
-    fetch("/api/dataset?limit=300&label=" + $("label-filter").value).then(r => r.json()),
-    fetch("/api/metrics").then(r => r.json())]);
-  const s = m.summary, miss = m.missingness;
-  $("cohort").innerHTML = kpi("Patients", s.patients, `${s.septic_patients} septic`) + kpi("Patient-hours", s.rows.toLocaleString())
-    + kpi("Septic-hour rate", pct(s.positive_rate)) + kpi("Most missing", Object.entries(miss).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => `${k} ${pct(v, 0)}`).join(", "));
-  const cols = ["patient_id", "hour", "facility", ...FEATURES, "SepsisLabel"];
-  $("data-table").innerHTML = `<thead class="sticky top-0 bg-white"><tr class="text-left text-slate-500">${cols.map(c => `<th class="pr-3 pb-2">${c}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map((r, i) => `<tr data-i="${i}" class="border-t border-slate-100 hover:bg-teal-50 cursor-pointer ${r.SepsisLabel ? "text-red-700" : ""}">${cols.map(c => `<td class="pr-3 py-1">${r[c] ?? ""}</td>`).join("")}</tr>`).join("") + "</tbody>";
-  $("data-table").querySelectorAll("tbody tr").forEach(tr => tr.addEventListener("click", () => {
-    fillForm(rows[tr.dataset.i]);
-    document.querySelector('[data-tab="triage"]').click();
-    form.requestSubmit();
-  }));
+// ---------- wards & beds (hospital version) ----------
+async function loadWards() {
+  const {wards} = await api("/api/wards");
+  $("#ward-body").innerHTML = wards.map(w => `<tr class="border-b last:border-0"><td class="py-2">${esc(w.name)}</td>
+    <td class="text-right num">${w.beds}</td><td class="text-right num">${w.occupied ?? 0}</td>
+    <td class="text-right"><input type="number" min="1" max="500" value="1" class="w-16 border rounded px-1" id="addbeds-${w.id}">
+      <button data-addbeds="${w.id}" class="ml-1 text-teal-700 hover:underline">Add</button></td></tr>`).join("");
+  document.querySelectorAll("[data-addbeds]").forEach(b => b.onclick = async () => {
+    try { await api(`/api/wards/${b.dataset.addbeds}/beds`, {method: "POST", body: JSON.stringify({count: +$("#addbeds-" + b.dataset.addbeds).value})});
+      toast("Beds added."); loadWards(); } catch (e) { toast(e.message); }
+  });
 }
-$("label-filter").addEventListener("change", loadData);
-$("gen-btn").addEventListener("click", async () => {
-  $("gen-status").textContent = "Generating and scoring…";
-  const res = await fetch("/api/generate-data", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({patients: Number($("gen-patients").value), seed: Number($("gen-seed").value)})});
-  const body = await res.json();
-  if (!res.ok) { $("gen-status").textContent = Object.values(body.errors).join(" "); return; }
-  $("gen-status").textContent = `Done: AUROC ${fmt(body.summary.auroc)}, AUPRC ${fmt(body.summary.auprc)} on ${body.summary.rows.toLocaleString()} rows.`;
-  metricsLoaded = false;
-  loadData();
-});
+if (LIVE && !NEEDS_SETUP) $("#add-ward").onsubmit = async e => { e.preventDefault();
+  const d = Object.fromEntries(new FormData(e.target));
+  try { await api("/api/wards", {method: "POST", body: JSON.stringify({name: d.name, beds: +d.beds})}); location.reload(); }
+  catch (err) { toast(err.message); }
+};
+
+// ---------- first-time setup ----------
+function wizRow(name = "", beds = 20) {
+  const div = document.createElement("div");
+  div.className = "flex gap-2 items-center";
+  div.innerHTML = `<input class="wiz-name flex-1 border rounded px-2 py-1.5" placeholder="Ward name, e.g. General Medicine" value="${esc(name)}" required>
+    <input class="wiz-beds w-24 border rounded px-2 py-1.5" type="number" min="1" max="500" value="${beds}" required> <span class="text-slate-500">beds</span>
+    <button type="button" class="wiz-del text-slate-400 hover:text-red-700" title="Remove">✕</button>`;
+  div.querySelector(".wiz-del").onclick = () => { div.remove(); wizTotal(); };
+  div.querySelector(".wiz-beds").oninput = wizTotal;
+  $("#wiz-wards").appendChild(div); wizTotal();
+}
+function wizTotal() {
+  const n = [...document.querySelectorAll(".wiz-beds")].reduce((a, i) => a + (+i.value || 0), 0);
+  $("#wiz-total").textContent = `${document.querySelectorAll(".wiz-beds").length} wards, ${n} beds in total.`;
+}
+if (NEEDS_SETUP) {
+  wizRow("General Medicine", 30); wizRow("Surgery", 20);
+  $("#wiz-add").onclick = () => wizRow();
+  $("#wizard").onsubmit = async e => { e.preventDefault();
+    const wards = [...document.querySelectorAll("#wiz-wards > div")].map(r => ({name: r.querySelector(".wiz-name").value, beds: +r.querySelector(".wiz-beds").value}));
+    try { await api("/api/setup", {method: "POST", body: JSON.stringify({name: e.target.hospital.value, wards})}); location.reload(); }
+    catch (err) { toast(err.message); }
+  };
+}
+
+// ---------- header ----------
+if (!LIVE) $("#next-day").onclick = async () => { const r = await api("/api/simulate/next-day", {method: "POST"});
+  toast(`${fmtDate(r.today)}: ${r.discharged} discharged, ${r.arrivals} new on the list, ${r.admitted} admitted.`); refresh(); if (current !== "overview") loadOverview(); };
+if (!LIVE) $("#reset").onclick = async () => { await api("/api/simulate/reset", {method: "POST"}); toast("Demo reset."); refresh(); if (current !== "overview") loadOverview(); };
+
+if (NEEDS_SETUP) $("#today").textContent = new Date().toLocaleDateString(undefined, {day: "numeric", month: "short"});
+else loadOverview();
 </script>
 </body>
 </html>
