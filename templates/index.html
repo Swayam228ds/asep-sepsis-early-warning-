@@ -158,6 +158,9 @@
     <div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold mb-2">Triage model: ROC curve</h2><div class="h-64"><canvas id="roc-chart"></canvas></div></div>
     <div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold mb-2">Triage model: top inputs</h2><div class="h-64"><canvas id="feat-chart"></canvas></div></div>
   </div>
+  <div class="bg-white rounded-lg border border-slate-200 p-5"><h2 class="font-semibold">Admissions forecast on the test months</h2>
+    <p class="text-xs text-slate-500 mb-2">Daily admissions at Hero DMC Heart Institute, Ludhiana, Dec 2018 to Mar 2019: actual against our next-day forecast.</p>
+    <div class="h-72"><canvas id="fc-test-chart"></canvas></div></div>
 </section>
 </main>
 
@@ -203,7 +206,7 @@ async function loadOverview() {
     tile("Discharges tomorrow", o.tomorrow.discharges, "predicted from length of stay") +
     tile("Admissions tomorrow", o.tomorrow.admissions, "forecast") +
     tile("Bed gap tomorrow", (gap > 0 ? "+" : "") + gap, gap >= 0 ? "spare beds expected" : "beds short", gap >= 0 ? "border-emerald-300" : "border-red-300 bg-red-50");
-  $("#fc-source").textContent = o.forecast_source === "model" ? "" : "Forecast is using a placeholder until the Ludhiana model is trained.";
+  $("#fc-source").textContent = o.forecast_source === "model" ? "Weekly and yearly pattern learned from 15,757 Ludhiana admissions, scaled to this hospital." : "Forecast is using a placeholder until the Ludhiana model is trained.";
   chart("forecast-chart", {type: "bar", data: {labels: o.forecast.map(d => fmtDate(d.day)), datasets: [
       {label: "Beds free (before admissions)", data: o.forecast.map(d => d.beds_free_before_admissions), backgroundColor: "#99f6e4"},
       {label: "Expected admissions", data: o.forecast.map(d => d.expected_admissions), type: "line", borderColor: "#b91c1c", backgroundColor: "#b91c1c"}]},
@@ -343,6 +346,13 @@ async function loadReport() {
     chart("feat-chart", {type: "bar", data: {labels: t.top_features.slice(0, 10).map(f => f[0].replace("triage_vital_", "").replace("cc_", "complaint: ")),
       datasets: [{label: "Share of model gain", data: t.top_features.slice(0, 10).map(f => f[1]), backgroundColor: "#0f766e"}]},
       options: {indexAxis: "y", maintainAspectRatio: false, plugins: {legend: {display: false}}}});
+  }
+  if (a) {
+    const ts = a.test_series;
+    chart("fc-test-chart", {type: "line", data: {labels: ts.map(r => fmtDate(r[0])), datasets: [
+      {label: "Actual admissions", data: ts.map(r => r[1]), borderColor: "#94a3b8", backgroundColor: "#94a3b8", pointRadius: 0, borderWidth: 1.5},
+      {label: "Forecast", data: ts.map(r => r[2]), borderColor: "#0f766e", backgroundColor: "#0f766e", pointRadius: 0, borderWidth: 2}]},
+      options: {maintainAspectRatio: false, scales: {y: {beginAtZero: true, title: {display: true, text: "admissions per day"}}, x: {ticks: {maxTicksLimit: 12}}}}});
   }
 }
 

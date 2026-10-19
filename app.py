@@ -8,6 +8,7 @@ from hospital import db, models, services
 from hospital.seed_demo import WARDS, seed
 
 app = Flask(__name__)
+app.json.sort_keys = False
 
 
 def ensure_db():

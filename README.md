@@ -20,12 +20,14 @@ Data Science Programming course project.
 
 ## Status
 
-| Part | Data | State |
+All three models are trained, connected to the dashboard and tested.
+
+| Part | Data | Result on held-out data |
 |---|---|---|
-| Triage admission model (M2) | Yale ED triage dataset | Trained. AUROC 0.880 vs 0.765 for ESI level alone, 0.853 on an ED never seen in training |
-| Waiting list priority | Rule, weights editable in the dashboard | Done |
-| Length-of-stay model (M3) | Hero DMC Heart Institute, Ludhiana | Waiting for the dataset; the dashboard uses a typical-stay placeholder until then |
-| Admissions forecast (M1, optional) | Hero DMC Heart Institute, Ludhiana | Waiting for the dataset; flat placeholder until then |
+| Triage admission (M2) | Yale ED triage dataset, 560,486 visits | AUROC 0.880 vs 0.765 for ESI level alone; 0.853 on an ED never seen in training |
+| Length of stay (M3) | Hero DMC Heart Institute, Ludhiana, 15,757 admissions | Average error 2.69 days vs 3.10 for the median stay by admission type; daily discharge count error 6.2 vs 7.8 patients/day |
+| Admissions forecast (M1) | Hero DMC, plus Ludhiana daily weather and air quality | 5.3 admissions/day average error vs 6.0 for the 7-day average |
+| Waiting list priority | Rule, weights editable in the dashboard | |
 
 ## Run it
 
@@ -36,7 +38,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open **http://localhost:5000**. The first run creates a demo hospital in `data/hospital.db`: three 20-bed wards, about 50 admitted patients and 40 people on the waiting list. All names are made up. Use **Next day** to move the clock forward (patients are discharged, new ones arrive and the top of the queue is admitted) and **Reset demo** to start again.
+Open **http://localhost:5000**. The first run creates a demo hospital in `data/hospital.db`: three wards with 60 beds, about 50 admitted patients and 40 people on the waiting list. Each demo patient is a real Ludhiana admission from the test months (so the stay the simulator plays out is the real one), with a made-up name. Emergency patients also get made-up triage observations, since the Ludhiana data has none. Use **Next day** to move the clock forward (patients are discharged, new ones arrive and the top of the queue is admitted) and **Reset demo** to start again.
 
 ### Dashboard pages
 
@@ -68,7 +70,33 @@ This takes about two minutes on a 4-core CPU. It uses only triage-time inputs (E
 | ESI level alone (what triage uses today) | 0.765 | 0.496 |
 | LightGBM trained on EDs A and B, tested on ED C | 0.853 | |
 
-**M3 and M1 (Ludhiana).** Scripts follow once the Hero DMC files are added to `data/raw/`.
+**M3 and M1 (Ludhiana).** Put the four Hero DMC CSV files (`HDHI Admission data.csv`, `HDHI Pollution Data.csv` and the others) in `data/raw/hdhi/`, then:
+
+```bash
+python training/m3_los.py        # length of stay, a few seconds
+python training/m1_admissions.py # daily admissions forecast, a few seconds
+```
+
+Both scripts split by time: they train on Apr 2017 to Nov 2018 and test on Dec 2018 to Mar 2019, the way a hospital would use them. The admission dates in the file are written two ways (M/D/YYYY and DD/MM/YYYY), and `training/hdhi.py` uses the `month year` column to read each one correctly.
+
+The length-of-stay model uses only what is known on the day of admission: age, sex, rural or urban, emergency or planned, history (diabetes, hypertension, heart disease and so on), admission blood tests, and the admitting diagnosis. Discharge date, outcome and ICU days are left out, because they are only known later. It predicts two numbers: the likely stay (P50) and a stay that 9 in 10 similar patients finish within (P90).
+
+| Length of stay (3,169 test admissions) | Our model | Median stay by admission type |
+|---|---|---|
+| Average error | 2.69 days | 3.10 days |
+| Predicted within 2 days | 56% | 57% |
+| Error in patients discharged per day (actual ~26/day) | 6.2 | 7.8 |
+| Stays finished by the P90 date | 90% | |
+
+Single stays are hard to predict exactly, but the error in how many beds free up each day, which is what bed planning needs, falls by about a fifth.
+
+| Admissions forecast (121 test days, ~22 admissions/day) | Average error per day |
+|---|---|
+| Our LightGBM model (day of week, holidays, recent admissions, weather, air quality) | 5.3 |
+| Average of the last 7 days | 6.0 |
+| Same day last week | 6.6 |
+
+Mondays are the busiest day (22% above average) and Sundays the quietest (28% below). The dashboard uses this weekly and monthly pattern, scaled to the demo hospital's own admissions, because the demo hospital's history is simulated.
 
 ## API
 
@@ -94,14 +122,15 @@ hospital/models.py      Loads trained models, with clearly labelled fallbacks
 hospital/services.py    Waiting list priority, admit, discharge, overview, next-day simulation
 hospital/seed_demo.py   Demo hospital with made-up patients
 templates/index.html    Dashboard (Tailwind CSS + Chart.js)
-training/               Training scripts for each model
+training/               Training scripts: m2_triage.py, m3_los.py, m1_admissions.py
 models/                 Trained models and their metrics
 sepsis_app.py           Earlier sepsis early-warning project (python sepsis_app.py)
 ```
 
 ## Limits
 
-- The triage model learned from US emergency departments, and the length-of-stay model will learn from one Indian heart hospital. A real deployment would retrain on the hospital's own records.
+- The triage model learned from US emergency departments, and the length-of-stay and forecast models from one Indian heart hospital. A real deployment would retrain on the hospital's own records.
+- Hero DMC is a cardiac centre, so stays and admission patterns may differ from a general government hospital.
 - Demo patients are simulated; nothing here is live hospital data.
 
 ## Earlier work: sepsis early warning
@@ -110,5 +139,6 @@ The previous version of this project, a sepsis risk score from bedside vitals, s
 
 ## References
 
+- Hero DMC Heart Institute, Ludhiana admissions data (Kaggle: "Hospital Admissions Data"). Bollepalli SC, Sahani AK, et al. *An Optimized Machine Learning Model Accurately Predicts In-Hospital Outcomes at Admission to a Cardiac Unit.* Diagnostics 2022;12(2):241.
 - Hong WS, Haimovich AD, Taylor RA. *Predicting hospital admission at emergency department triage using machine learning.* PLoS ONE 2018;13(7):e0201016. https://doi.org/10.1371/journal.pone.0201016 (dataset: https://github.com/yaleemmlc/admissionprediction)
 - [LightGBM](https://lightgbm.readthedocs.io/) · [Flask](https://flask.palletsprojects.com/) · [scikit-learn](https://scikit-learn.org/) · [Chart.js](https://www.chartjs.org/)

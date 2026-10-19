@@ -1,0 +1,99 @@
+{
+  "n_train": 12588,
+  "n_test": 3169,
+  "test_period": [
+    "2018-12-01",
+    "2019-03-31"
+  ],
+  "mean_stay_days": 6.4150536269594465,
+  "median_stay_days": 5.0,
+  "model_p50": {
+    "mae_days": 2.6864755122052917,
+    "within_2_days": 0.5626380561691385
+  },
+  "baseline_by_type": {
+    "mae_days": 3.0975071000315557,
+    "within_2_days": 0.5676869674976334
+  },
+  "baseline_overall_median": {
+    "mae_days": 3.1735563269170086,
+    "within_2_days": 0.5468602082675923
+  },
+  "p90_coverage": 0.895235089933733,
+  "by_admission_type": {
+    "emergency": {
+      "n": 2180,
+      "mae_model": 2.9427726217844157,
+      "mae_baseline": 3.3389908256880734
+    },
+    "opd": {
+      "n": 989,
+      "mae_model": 2.121533450645645,
+      "mae_baseline": 2.5652173913043477
+    }
+  },
+  "daily_discharges_mae": {
+    "model": 6.233644859813084,
+    "baseline_by_type": 7.841121495327103,
+    "actual_mean_per_day": 26.317757009345794
+  },
+  "top_features": [
+    [
+      "EF",
+      0.1098
+    ],
+    [
+      "TLC",
+      0.1044
+    ],
+    [
+      "BNP",
+      0.0949
+    ],
+    [
+      "HB",
+      0.078
+    ],
+    [
+      "GLUCOSE",
+      0.0683
+    ],
+    [
+      "ATYPICAL CHEST PAIN",
+      0.0679
+    ],
+    [
+      "STABLE ANGINA",
+      0.0657
+    ],
+    [
+      "PLATELETS",
+      0.0655
+    ],
+    [
+      "CREATININE",
+      0.0575
+    ],
+    [
+      "emergency",
+      0.0544
+    ],
+    [
+      "UREA",
+      0.0512
+    ],
+    [
+      "AGE",
+      0.0378
+    ]
+  ],
+  "summary": {
+    "Average error, our model": "2.69 days",
+    "Average error, median stay by admission type": "3.10 days",
+    "Predicted within 2 days": "56% vs 57%",
+    "Stays finished by the P90 date": "90%",
+    "Daily discharge count error": "6.2 vs 7.8 patients/day (actual ~26/day)",
+    "Test admissions (Dec 2018 to Mar 2019)": "3,169"
+  },
+  "note": "Average error in predicted stay on later months the model never saw. The baseline is what a ward would guess today."
+}

@@ -103,8 +103,8 @@ def predict_los(patient):
     """Return (p50, p90, source, reasons) in days for an admitted patient dict."""
     meta = los_meta()
     b50, b90 = _booster("los_p50.txt"), _booster("los_p90.txt")
-    values = {**patient.get("clinical", {}), "age": patient.get("age"), "gender": patient.get("gender"),
-              "source": patient.get("source")}
+    values = {**patient.get("clinical", {}), "AGE": patient.get("age"),
+              "male": int(patient.get("gender") == "Male"), "emergency": int(patient.get("source") == "emergency")}
     if meta and b50 is not None:
         X = _frame(values, meta)
         transform = meta.get("target_transform")
