@@ -1,0 +1,4 @@
+models/*.txt -text
+models/*.json -text
+models/*.csv -text
+*.onnx binary
