@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hospital Bed Manager</title>
+<title>{{ "Hospital Bed Manager" if not live else (hospital_name or "Hospital") + " · Bed Manager" }}</title>
 <script src="https://cdn.tailwindcss.com/3.4.3"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
@@ -18,31 +18,54 @@
 <header class="bg-white border-b border-slate-200">
   <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h1 class="text-lg font-semibold">Hospital Bed Manager</h1>
+      <h1 class="text-lg font-semibold">{% if live %}{{ hospital_name or "New hospital" }} <span class="text-slate-400 font-normal">· Bed Manager</span>{% else %}Hospital Bed Manager <span class="text-xs font-normal bg-amber-100 text-amber-800 rounded px-1.5 py-0.5 align-middle">Demo</span>{% endif %}</h1>
       <p class="text-xs text-slate-500">Who needs a bed, who gets the next one, and when beds will free up. Decision support only; doctors decide.</p>
     </div>
     <div class="flex items-center gap-2 text-sm">
-      <span class="text-slate-500">Demo date</span>
+      <span class="text-slate-500">{{ "Today" if live else "Demo date" }}</span>
       <strong id="today" class="num">&mdash;</strong>
+      {% if not live %}
       <button id="next-day" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-3 py-1.5">Next day &rarr;</button>
       <button id="reset" class="border border-slate-300 hover:bg-slate-100 rounded px-3 py-1.5">Reset demo</button>
+      {% endif %}
     </div>
   </div>
+  {% if not needs_setup %}
   <nav class="max-w-7xl mx-auto px-4 flex gap-1 text-sm overflow-x-auto" role="tablist">
     <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="overview" aria-selected="true">Overview</button>
     <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="queue" aria-selected="false">Waiting list</button>
     <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="intake" aria-selected="false">Emergency intake</button>
     <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="beds" aria-selected="false">Bed board</button>
     <button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="report" aria-selected="false">Model report</button>
+    {% if live %}<button class="tab-btn border-b-2 border-transparent px-3 py-2" data-tab="setup" aria-selected="false">Wards &amp; beds</button>{% endif %}
   </nav>
+  {% endif %}
 </header>
 
 <div id="toast" class="hidden fixed bottom-4 right-4 bg-slate-900 text-white text-sm rounded px-4 py-2 shadow"></div>
 
 <main class="max-w-7xl mx-auto px-4 py-6">
+{% if needs_setup %}
+<!-- ============ First-time setup (hospital version) ============ -->
+<section id="tab-wizard" class="max-w-2xl mx-auto bg-white rounded-lg border border-slate-200 p-6 space-y-5">
+  <div>
+    <h2 class="text-lg font-semibold">Set up your hospital</h2>
+    <p class="text-sm text-slate-500">Enter your hospital's name and its wards. You can add more wards and beds later.</p>
+  </div>
+  <form id="wizard" class="space-y-4 text-sm">
+    <label class="block">Hospital name<input name="hospital" required class="mt-1 w-full border rounded px-2 py-1.5" placeholder="e.g. District Hospital, Cuttack"></label>
+    <div>
+      <div class="flex justify-between items-end mb-1"><span>Wards</span><button type="button" id="wiz-add" class="text-teal-700 hover:underline">+ Add ward</button></div>
+      <div id="wiz-wards" class="space-y-2"></div>
+    </div>
+    <p id="wiz-total" class="text-xs text-slate-500"></p>
+    <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-2 font-medium">Create hospital</button>
+  </form>
+</section>
+{% endif %}
 
 <!-- ============ Overview ============ -->
-<section id="tab-overview" class="space-y-6">
+<section id="tab-overview" class="space-y-6 {{ 'hidden' if needs_setup }}">
   <div class="grid grid-cols-2 md:grid-cols-5 gap-3" id="tiles"></div>
   <div class="grid lg:grid-cols-3 gap-6">
     <div class="lg:col-span-2 bg-white rounded-lg border border-slate-200 p-5">
@@ -86,15 +109,36 @@
       </table>
     </div>
   </div>
-  <form id="add-patient" class="bg-white rounded-lg border border-slate-200 p-5 grid sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-    <h2 class="font-semibold sm:col-span-3 lg:col-span-6">Add a planned (OPD) patient</h2>
-    <input name="name" required placeholder="Name" class="border rounded px-2 py-1.5">
-    <input name="age" type="number" min="0" max="120" placeholder="Age" class="border rounded px-2 py-1.5">
-    <select name="gender" class="border rounded px-2 py-1.5"><option>Male</option><option>Female</option></select>
-    <select name="ward" class="border rounded px-2 py-1.5">{% for w in wards %}<option>{{ w }}</option>{% endfor %}</select>
-    <input name="condition" placeholder="Reason for admission" class="border rounded px-2 py-1.5">
-    <select name="urgency" class="border rounded px-2 py-1.5"><option value="1">Routine</option><option value="2">Soon</option><option value="3">Urgent</option></select>
-    <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-1.5 sm:col-span-3 lg:col-span-6 justify-self-start">Add to waiting list</button>
+  <form id="add-patient" class="bg-white rounded-lg border border-slate-200 p-5 space-y-4 text-sm">
+    <h2 class="font-semibold">Add a patient</h2>
+    <div class="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      <label>Name<input name="name" required class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label>Age<input name="age" type="number" min="0" max="120" required class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label>Sex<select name="gender" class="mt-1 w-full border rounded px-2 py-1.5"><option>Male</option><option>Female</option></select></label>
+      <label>Lives in<select name="rural" class="mt-1 w-full border rounded px-2 py-1.5"><option value="0">Urban area</option><option value="1">Rural area</option></select></label>
+      <label>Admission type<select name="source" class="mt-1 w-full border rounded px-2 py-1.5"><option value="opd">Planned (OPD)</option><option value="emergency">Emergency</option></select></label>
+      <label>Ward<select name="ward" class="mt-1 w-full border rounded px-2 py-1.5">{% for w in wards %}<option>{{ w }}</option>{% endfor %}</select></label>
+      <label>Reason for admission<input name="condition" class="mt-1 w-full border rounded px-2 py-1.5"></label>
+      <label>Urgency<select name="urgency" class="mt-1 w-full border rounded px-2 py-1.5"><option value="1">Routine</option><option value="2">Soon</option><option value="3">Urgent</option></select></label>
+    </div>
+    <details class="border rounded p-3">
+      <summary class="cursor-pointer font-medium">Clinical details <span class="font-normal text-slate-500">(optional; makes the length-of-stay prediction more accurate)</span></summary>
+      <div class="mt-3 space-y-3">
+        <div><div class="text-xs text-slate-500 mb-1">History</div><div class="flex flex-wrap gap-x-4 gap-y-1">
+          {% for k, l in [("DM","Diabetes"),("HTN","Hypertension"),("CAD","Coronary artery disease"),("PRIOR CMP","Cardiomyopathy"),("CKD","Chronic kidney disease"),("SMOKING","Smoker"),("ALCOHOL","Alcohol")] %}
+          <label class="flex items-center gap-1"><input type="checkbox" data-flag="{{ k }}">{{ l }}</label>{% endfor %}</div></div>
+        <div><div class="text-xs text-slate-500 mb-1">Diagnosis on admission</div><div class="flex flex-wrap gap-x-4 gap-y-1">
+          {% for k, l in [("ACS","Acute coronary syndrome"),("STEMI","STEMI"),("HEART FAILURE","Heart failure"),("AF","Atrial fibrillation"),("VT","Ventricular tachycardia"),("CHB","Complete heart block"),("VALVULAR","Valve disease"),("STABLE ANGINA","Stable angina"),("ATYPICAL CHEST PAIN","Atypical chest pain"),("AKI","Acute kidney injury"),("CVA INFRACT","Stroke"),("CHEST INFECTION","Chest infection"),("UTI","Urinary tract infection"),("SEVERE ANAEMIA","Severe anaemia"),("SHOCK","Shock"),("CARDIOGENIC SHOCK","Cardiogenic shock")] %}
+          <label class="flex items-center gap-1"><input type="checkbox" data-flag="{{ k }}">{{ l }}</label>{% endfor %}</div></div>
+        <div><div class="text-xs text-slate-500 mb-1">Admission blood tests (leave blank if not done)</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {% for k, l in [("HB","Haemoglobin (g/dL)"),("TLC","White cells (×10³/µL)"),("PLATELETS","Platelets (×10³/µL)"),("GLUCOSE","Glucose (mg/dL)"),("UREA","Urea (mg/dL)"),("CREATININE","Creatinine (mg/dL)"),("BNP","BNP (pg/mL)"),("EF","Ejection fraction (%)")] %}
+          <label class="text-xs">{{ l }}<input type="number" step="any" data-lab="{{ k }}" class="mt-1 w-full border rounded px-2 py-1 text-sm"></label>{% endfor %}</div></div>
+      </div>
+    </details>
+    <div class="flex flex-wrap items-center gap-4">
+      <button name="action" value="queue" class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-1.5">Add to waiting list</button>
+      <button name="action" value="admit" class="border border-teal-700 text-teal-700 hover:bg-teal-50 rounded px-4 py-1.5">Admit now to a free bed</button>
+    </div>
   </form>
 </section>
 
@@ -162,12 +206,29 @@
     <p class="text-xs text-slate-500 mb-2">Daily admissions at Hero DMC Heart Institute, Ludhiana, Dec 2018 to Mar 2019: actual against our next-day forecast.</p>
     <div class="h-72"><canvas id="fc-test-chart"></canvas></div></div>
 </section>
+{% if live %}
+<!-- ============ Wards & beds (hospital version) ============ -->
+<section id="tab-setup" class="hidden space-y-6">
+  <div class="bg-white rounded-lg border border-slate-200 p-5">
+    <h2 class="font-semibold mb-3">Wards</h2>
+    <table class="w-full text-sm"><thead class="text-left text-xs text-slate-500 border-b"><tr><th class="py-2">Ward</th><th class="text-right">Beds</th><th class="text-right">Occupied</th><th class="text-right">Add beds</th></tr></thead>
+      <tbody id="ward-body"></tbody></table>
+  </div>
+  <form id="add-ward" class="bg-white rounded-lg border border-slate-200 p-5 flex flex-wrap items-end gap-3 text-sm">
+    <label>New ward name<input name="name" required class="mt-1 block border rounded px-2 py-1.5"></label>
+    <label>Beds<input name="beds" type="number" min="1" max="500" value="10" required class="mt-1 block w-24 border rounded px-2 py-1.5"></label>
+    <button class="bg-teal-700 hover:bg-teal-800 text-white rounded px-4 py-1.5">Add ward</button>
+  </form>
+  <p class="text-xs text-slate-500">The length-of-stay and admissions models were trained on a heart hospital in Ludhiana; retrain them on your own records for best results (see the README).</p>
+</section>
+{% endif %}
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
 const fmtDate = s => new Date(s + "T00:00").toLocaleDateString(undefined, {day: "numeric", month: "short"});
 const pct = x => (x * 100).toFixed(0) + "%";
+const esc = x => String(x ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
 const URG = {1: "Routine", 2: "Soon", 3: "Urgent"};
 const URG_CLS = {1: "bg-slate-100 text-slate-700", 2: "bg-amber-100 text-amber-800", 3: "bg-red-100 text-red-800"};
 let charts = {}, lastTriage = null;
@@ -182,7 +243,8 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.re
 function chart(id, cfg) { charts[id]?.destroy(); charts[id] = new Chart(document.getElementById(id), cfg); }
 
 // ---------- tabs ----------
-const loaders = {overview: loadOverview, queue: loadQueue, beds: loadBeds, report: loadReport, intake: () => {}};
+const LIVE = {{ "true" if live else "false" }}, NEEDS_SETUP = {{ "true" if needs_setup else "false" }};
+const loaders = {overview: loadOverview, queue: loadQueue, beds: loadBeds, report: loadReport, intake: () => {}, setup: loadWards};
 let current = "overview";
 document.querySelectorAll(".tab-btn").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tab-btn").forEach(x => x.setAttribute("aria-selected", x === b));
@@ -211,7 +273,7 @@ async function loadOverview() {
       {label: "Beds free (before admissions)", data: o.forecast.map(d => d.beds_free_before_admissions), backgroundColor: "#99f6e4"},
       {label: "Expected admissions", data: o.forecast.map(d => d.expected_admissions), type: "line", borderColor: "#b91c1c", backgroundColor: "#b91c1c"}]},
     options: {maintainAspectRatio: false, scales: {y: {beginAtZero: true, title: {display: true, text: "beds / patients"}}}}});
-  $("#ward-bars").innerHTML = o.by_ward.map(w => `<div><div class="flex justify-between"><span>${w.ward}</span><span class="num">${w.occupied}/${w.total}</span></div>
+  $("#ward-bars").innerHTML = o.by_ward.map(w => `<div><div class="flex justify-between"><span>${esc(w.ward)}</span><span class="num">${w.occupied}/${w.total}</span></div>
     <div class="h-2 bg-slate-100 rounded mt-1"><div class="h-2 rounded ${w.occupied / w.total > 0.9 ? "bg-red-500" : "bg-teal-600"}" style="width:${100 * w.occupied / w.total}%"></div></div></div>`).join("");
 }
 
@@ -223,19 +285,24 @@ async function loadQueue() {
   for (const k of ["w_urgency", "w_wait", "w_prob", "wait_cap"]) $("#weights")[k].value = s[k];
   $("#queue-body").innerHTML = queue.map(p => `<tr class="border-b last:border-0">
     <td class="py-2 pr-3 num">${p.rank}</td>
-    <td class="pr-3"><div class="font-medium">${p.name}</div><div class="text-xs text-slate-500">${p.age ?? ""} ${p.gender ?? ""}</div></td>
-    <td class="pr-3">${p.condition ?? ""}</td><td class="pr-3">${p.ward ?? ""}</td>
+    <td class="pr-3"><div class="font-medium">${esc(p.name)}</div><div class="text-xs text-slate-500">${p.age ?? ""} ${p.gender ?? ""}</div></td>
+    <td class="pr-3">${esc(p.condition)}</td><td class="pr-3">${esc(p.ward)}</td>
     <td class="pr-3">${p.source === "emergency" ? "Emergency" : "Planned"}</td>
     <td class="pr-3"><select data-urg="${p.id}" class="text-xs rounded px-1 py-0.5 ${URG_CLS[p.urgency]}">${[1, 2, 3].map(u => `<option value="${u}" ${u === p.urgency ? "selected" : ""}>${URG[u]}</option>`).join("")}</select></td>
     <td class="pr-3 text-right num">${p.admit_prob == null ? "&ndash;" : pct(p.admit_prob)}</td>
     <td class="pr-3 text-right num">${p.days_waited}</td>
     <td class="pr-3 text-right num font-semibold">${p.priority}</td>
-    <td class="text-right"><button data-admit="${p.id}" class="text-teal-700 hover:underline">Admit</button></td></tr>`).join("")
+    <td class="text-right whitespace-nowrap"><button data-admit="${p.id}" class="text-teal-700 hover:underline">Admit</button>
+      <button data-remove="${p.id}" class="ml-2 text-slate-400 hover:text-red-700" title="Remove from the list">✕</button></td></tr>`).join("")
     || `<tr><td colspan="10" class="py-6 text-center text-slate-500">Nobody is waiting.</td></tr>`;
   document.querySelectorAll("[data-admit]").forEach(b => b.onclick = async () => {
     try { const r = await api(`/api/queue/${b.dataset.admit}/admit`, {method: "POST", body: "{}"});
       toast(`Admitted. Expected stay ${r.los_p50} days (up to ${r.los_p90}).`); loadQueue();
     } catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => {
+    if (!confirm("Remove this patient from the waiting list?")) return;
+    await api(`/api/queue/${b.dataset.remove}/remove`, {method: "POST"}); toast("Removed from the list."); loadQueue();
   });
   document.querySelectorAll("[data-urg]").forEach(sel => sel.onchange = async () => {
     await api(`/api/queue/${sel.dataset.urg}/urgency`, {method: "POST", body: JSON.stringify({urgency: +sel.value})}); loadQueue();
@@ -244,8 +311,18 @@ async function loadQueue() {
 $("#weights").onsubmit = async e => { e.preventDefault();
   await api("/api/settings", {method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target)))}); loadQueue(); };
 $("#add-patient").onsubmit = async e => { e.preventDefault();
-  const d = Object.fromEntries(new FormData(e.target)); d.source = "opd"; d.age = d.age ? +d.age : null;
-  await api("/api/queue", {method: "POST", body: JSON.stringify(d)}); e.target.reset(); toast("Added to the waiting list."); loadQueue(); };
+  const f = e.target, d = Object.fromEntries(new FormData(f));
+  const clinical = {rural: +d.rural};
+  f.querySelectorAll("[data-flag]").forEach(c => clinical[c.dataset.flag] = c.checked ? 1 : 0);
+  f.querySelectorAll("[data-lab]").forEach(i => { if (i.value !== "") clinical[i.dataset.lab] = +i.value; });
+  const body = {name: d.name, age: +d.age, gender: d.gender, source: d.source, ward: d.ward, condition: d.condition,
+                urgency: +d.urgency, clinical, admit_now: e.submitter?.value === "admit"};
+  try {
+    const r = await api("/api/queue", {method: "POST", body: JSON.stringify(body)});
+    toast(r.admit_error ? `Added to the waiting list: ${r.admit_error}.` : body.admit_now ? `Admitted. Expected stay ${r.los_p50} days (up to ${r.los_p90}).` : "Added to the waiting list.");
+    f.reset(); loadQueue();
+  } catch (err) { toast(err.message); }
+};
 
 // ---------- emergency intake ----------
 const PRESETS = {
@@ -294,19 +371,19 @@ async function loadBeds() {
   const wards = {};
   beds.forEach(b => (wards[b.ward] ??= []).push(b));
   $("#wards").innerHTML = Object.entries(wards).map(([w, list]) => `<div class="bg-white rounded-lg border border-slate-200 p-5">
-    <h2 class="font-semibold mb-3">${w} <span class="text-sm font-normal text-slate-500">${list.filter(b => b.patient).length}/${list.length} occupied</span></h2>
+    <h2 class="font-semibold mb-3">${esc(w)} <span class="text-sm font-normal text-slate-500">${list.filter(b => b.patient).length}/${list.length} occupied</span></h2>
     <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-10 gap-2">${list.map(b => {
       const cls = b.status === "free" ? "bg-emerald-50 border-emerald-300" : b.status === "freeing" ? "bg-amber-50 border-amber-400" : "bg-slate-50 border-slate-300";
       const p = b.patient;
       return `<button data-bed="${b.bed_id}" class="bed text-left border rounded p-2 text-xs ${cls} hover:shadow">
-        <div class="font-semibold">${b.label}</div>${p ? `<div class="truncate">${p.name}</div><div class="text-slate-500">${p.days_left < 0 ? "overdue" : "out ~" + fmtDate(p.expected_discharge)}</div>` : `<div class="text-emerald-700">Free</div>`}</button>`;
+        <div class="font-semibold">${esc(b.label)}</div>${p ? `<div class="truncate">${esc(p.name)}</div><div class="text-slate-500">${p.days_left < 0 ? "overdue" : "out ~" + fmtDate(p.expected_discharge)}</div>` : `<div class="text-emerald-700">Free</div>`}</button>`;
     }).join("")}</div></div>`).join("");
   document.querySelectorAll("[data-bed]").forEach(el => el.onclick = () => {
     const b = beds.find(x => x.bed_id === +el.dataset.bed);
     if (!b.patient) return toast("This bed is free. Admit someone from the waiting list.");
     const p = b.patient;
-    $("#bed-detail-body").innerHTML = `<div class="flex justify-between"><h3 class="font-semibold">${b.label} · ${p.name}</h3><button id="close-bed" class="text-slate-500">✕</button></div>
-      <p>${p.age} ${p.gender} · ${p.condition} · ${p.source === "emergency" ? "Emergency" : "Planned"} admission</p>
+    $("#bed-detail-body").innerHTML = `<div class="flex justify-between"><h3 class="font-semibold">${esc(b.label)} · ${esc(p.name)}</h3><button id="close-bed" class="text-slate-500">✕</button></div>
+      <p>${p.age} ${p.gender} · ${esc(p.condition)} · ${p.source === "emergency" ? "Emergency" : "Planned"} admission</p>
       <p>Admitted ${fmtDate(p.admitted_on)} (day ${p.days_in + 1})</p>
       <p><strong>Expected discharge ${fmtDate(p.expected_discharge)}</strong>, could be as late as ${fmtDate(p.latest_discharge)}</p>
       <p class="text-xs text-slate-500">Predicted stay ${p.los_p50} days (likely), ${p.los_p90} days (90% of similar patients leave by then).</p>
@@ -356,12 +433,56 @@ async function loadReport() {
   }
 }
 
-// ---------- header ----------
-$("#next-day").onclick = async () => { const r = await api("/api/simulate/next-day", {method: "POST"});
-  toast(`${fmtDate(r.today)}: ${r.discharged} discharged, ${r.arrivals} new on the list, ${r.admitted} admitted.`); refresh(); if (current !== "overview") loadOverview(); };
-$("#reset").onclick = async () => { await api("/api/simulate/reset", {method: "POST"}); toast("Demo reset."); refresh(); if (current !== "overview") loadOverview(); };
+// ---------- wards & beds (hospital version) ----------
+async function loadWards() {
+  const {wards} = await api("/api/wards");
+  $("#ward-body").innerHTML = wards.map(w => `<tr class="border-b last:border-0"><td class="py-2">${esc(w.name)}</td>
+    <td class="text-right num">${w.beds}</td><td class="text-right num">${w.occupied ?? 0}</td>
+    <td class="text-right"><input type="number" min="1" max="500" value="1" class="w-16 border rounded px-1" id="addbeds-${w.id}">
+      <button data-addbeds="${w.id}" class="ml-1 text-teal-700 hover:underline">Add</button></td></tr>`).join("");
+  document.querySelectorAll("[data-addbeds]").forEach(b => b.onclick = async () => {
+    try { await api(`/api/wards/${b.dataset.addbeds}/beds`, {method: "POST", body: JSON.stringify({count: +$("#addbeds-" + b.dataset.addbeds).value})});
+      toast("Beds added."); loadWards(); } catch (e) { toast(e.message); }
+  });
+}
+if (LIVE && !NEEDS_SETUP) $("#add-ward").onsubmit = async e => { e.preventDefault();
+  const d = Object.fromEntries(new FormData(e.target));
+  try { await api("/api/wards", {method: "POST", body: JSON.stringify({name: d.name, beds: +d.beds})}); location.reload(); }
+  catch (err) { toast(err.message); }
+};
 
-loadOverview();
+// ---------- first-time setup ----------
+function wizRow(name = "", beds = 20) {
+  const div = document.createElement("div");
+  div.className = "flex gap-2 items-center";
+  div.innerHTML = `<input class="wiz-name flex-1 border rounded px-2 py-1.5" placeholder="Ward name, e.g. General Medicine" value="${esc(name)}" required>
+    <input class="wiz-beds w-24 border rounded px-2 py-1.5" type="number" min="1" max="500" value="${beds}" required> <span class="text-slate-500">beds</span>
+    <button type="button" class="wiz-del text-slate-400 hover:text-red-700" title="Remove">✕</button>`;
+  div.querySelector(".wiz-del").onclick = () => { div.remove(); wizTotal(); };
+  div.querySelector(".wiz-beds").oninput = wizTotal;
+  $("#wiz-wards").appendChild(div); wizTotal();
+}
+function wizTotal() {
+  const n = [...document.querySelectorAll(".wiz-beds")].reduce((a, i) => a + (+i.value || 0), 0);
+  $("#wiz-total").textContent = `${document.querySelectorAll(".wiz-beds").length} wards, ${n} beds in total.`;
+}
+if (NEEDS_SETUP) {
+  wizRow("General Medicine", 30); wizRow("Surgery", 20);
+  $("#wiz-add").onclick = () => wizRow();
+  $("#wizard").onsubmit = async e => { e.preventDefault();
+    const wards = [...document.querySelectorAll("#wiz-wards > div")].map(r => ({name: r.querySelector(".wiz-name").value, beds: +r.querySelector(".wiz-beds").value}));
+    try { await api("/api/setup", {method: "POST", body: JSON.stringify({name: e.target.hospital.value, wards})}); location.reload(); }
+    catch (err) { toast(err.message); }
+  };
+}
+
+// ---------- header ----------
+if (!LIVE) $("#next-day").onclick = async () => { const r = await api("/api/simulate/next-day", {method: "POST"});
+  toast(`${fmtDate(r.today)}: ${r.discharged} discharged, ${r.arrivals} new on the list, ${r.admitted} admitted.`); refresh(); if (current !== "overview") loadOverview(); };
+if (!LIVE) $("#reset").onclick = async () => { await api("/api/simulate/reset", {method: "POST"}); toast("Demo reset."); refresh(); if (current !== "overview") loadOverview(); };
+
+if (NEEDS_SETUP) $("#today").textContent = new Date().toLocaleDateString(undefined, {day: "numeric", month: "short"});
+else loadOverview();
 </script>
 </body>
 </html>

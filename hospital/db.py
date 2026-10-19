@@ -5,7 +5,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "hospital.db"
+DEMO_DB = ROOT / "data" / "hospital.db"        # demo hospital with simulated patients
+LIVE_DB = ROOT / "data" / "hospital_live.db"   # empty hospital that staff set up themselves
+DB_PATH = DEMO_DB
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -33,10 +35,18 @@ CREATE TABLE IF NOT EXISTS daily_log (
     arrivals INTEGER NOT NULL, occupied INTEGER NOT NULL);
 """
 
-DEFAULT_SETTINGS = {"today": "2026-10-19", "w_urgency": "10", "w_wait": "1", "w_prob": "20", "wait_cap": "30"}
+DEFAULT_SETTINGS = {"mode": "demo", "hospital_name": "", "today": "2026-10-19",
+                    "w_urgency": "10", "w_wait": "1", "w_prob": "20", "wait_cap": "30"}
 
 
-def connect(path=DB_PATH):
+def configure(path):
+    """Point every later connection at this database file."""
+    global DB_PATH
+    DB_PATH = path
+
+
+def connect(path=None):
+    path = path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
@@ -45,7 +55,7 @@ def connect(path=DB_PATH):
 
 
 @contextmanager
-def session(path=DB_PATH):
+def session(path=None):
     con = connect(path)
     try:
         yield con

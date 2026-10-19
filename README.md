@@ -40,6 +40,25 @@ python app.py
 
 Open **http://localhost:5000**. The first run creates a demo hospital in `data/hospital.db`: three wards with 60 beds, about 50 admitted patients and 40 people on the waiting list. Each demo patient is a real Ludhiana admission from the test months (so the stay the simulator plays out is the real one), with a made-up name. Emergency patients also get made-up triage observations, since the Ludhiana data has none. Use **Next day** to move the clock forward (patients are discharged, new ones arrive and the top of the queue is admitted) and **Reset demo** to start again.
 
+### Empty version for a real hospital
+
+The demo above stays as it is. For a hospital to set up its own platform from scratch, run:
+
+```bash
+python app.py --hospital
+```
+
+Open **http://localhost:5001**. This version starts empty and keeps its data in its own database, `data/hospital_live.db`, so it never touches the demo.
+
+1. **Set up:** on first open, a setup screen asks for the hospital name and its wards with the number of beds in each. Bed labels are made from the ward name (for example `GM-01` for General Medicine).
+2. **Add patients by hand:** on the Waiting list, fill in name, age, sex, condition, source (planned or emergency), ward and urgency. The optional Clinical details section takes history, diagnoses and lab values, which make the length-of-stay prediction better. Use **Add to queue** or **Admit now**.
+3. **Manage wards:** the extra **Wards & beds** page adds a new ward or more beds later.
+4. The clock is the real date. There is no Next day or Reset button, and the demo simulator is switched off.
+
+The admissions forecast starts from a rough guess (beds divided by an average stay) and switches to the hospital's own recent admissions once two weeks of patients have been entered. The models were trained on a heart hospital in Ludhiana, so a hospital should retrain them on its own records for best results (see below).
+
+To start the hospital version over, stop the app and delete `data/hospital_live.db`.
+
 ### Dashboard pages
 
 | Page | What it shows |
@@ -49,6 +68,7 @@ Open **http://localhost:5000**. The first run creates a demo hospital in `data/h
 | Emergency intake | Triage form that predicts admission probability with the main reasons, then adds the patient to the queue. |
 | Bed board | Every bed by ward: free, freeing within a day, or occupied, with each patient's predicted discharge date and range. |
 | Model report | Each model's results against its baseline. |
+| Wards & beds | Hospital version only. Add wards and beds. |
 
 ## Train the models
 
@@ -110,7 +130,11 @@ Mondays are the busiest day (22% above average) and Sundays the quietest (28% be
 | POST | `/api/triage` | Admission probability and reasons for one emergency patient |
 | GET | `/api/beds` | Every bed with status and predicted discharge |
 | POST | `/api/beds/<id>/discharge` | Free a bed |
-| POST | `/api/simulate/next-day`, `/api/simulate/reset` | Demo clock |
+| POST | `/api/queue/<id>/remove` | Take a patient off the waiting list |
+| POST | `/api/setup` | Hospital version: first-time setup with name and wards |
+| GET, POST | `/api/wards` | Hospital version: list wards; add a ward |
+| POST | `/api/wards/<id>/beds` | Hospital version: add beds to a ward |
+| POST | `/api/simulate/next-day`, `/api/simulate/reset` | Demo clock (demo only) |
 | GET | `/api/metrics` | Results of every trained model |
 
 ## Project structure

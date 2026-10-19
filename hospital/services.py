@@ -6,8 +6,66 @@ from datetime import date, timedelta
 from . import db, models
 
 
+def is_live(con):
+    return db.get_settings(con).get("mode") == "live"
+
+
 def today(con):
+    """The real date for a live hospital; the simulated clock for the demo."""
+    if is_live(con):
+        return date.today()
     return date.fromisoformat(db.get_settings(con)["today"])
+
+
+# ---------- hospital setup (live mode) ----------
+
+def setup_hospital(con, name, wards):
+    """Create the wards and beds of a new hospital. wards = [{"name": ..., "beds": n}, ...]."""
+    if con.execute("SELECT COUNT(*) FROM wards").fetchone()[0]:
+        raise ValueError("this hospital is already set up")
+    if not wards:
+        raise ValueError("add at least one ward")
+    db.set_setting(con, "hospital_name", name.strip() or "Hospital")
+    for w in wards:
+        add_ward(con, w["name"], int(w["beds"]))
+
+
+def add_ward(con, name, beds):
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("ward name is required")
+    if not 1 <= beds <= 500:
+        raise ValueError("beds must be between 1 and 500")
+    if con.execute("SELECT 1 FROM wards WHERE name = ?", (name,)).fetchone():
+        raise ValueError(f"a ward called {name} already exists")
+    wid = con.execute("INSERT INTO wards (name, kind) VALUES (?, 'general')", (name,)).lastrowid
+    add_beds(con, wid, beds)
+    return wid
+
+
+def add_beds(con, ward_id, count):
+    ward = con.execute("SELECT name FROM wards WHERE id = ?", (ward_id,)).fetchone()
+    if ward is None:
+        raise ValueError("no such ward")
+    if not 1 <= count <= 500:
+        raise ValueError("count must be between 1 and 500")
+    words = ward["name"].split()
+    prefix = ("".join(w[0] for w in words) if len(words) > 1 else words[0][:3]).upper()[:4]
+    start = con.execute("SELECT COUNT(*) FROM beds WHERE ward_id = ?", (ward_id,)).fetchone()[0]
+    for i in range(start + 1, start + count + 1):
+        con.execute("INSERT INTO beds (ward_id, label) VALUES (?, ?)", (ward_id, f"{prefix}-{i:02d}"))
+
+
+def wards(con):
+    return [dict(r) for r in con.execute(
+        "SELECT wards.id, wards.name, COUNT(beds.id) AS beds, SUM(beds.patient_id IS NOT NULL) AS occupied "
+        "FROM wards LEFT JOIN beds ON beds.ward_id = wards.id GROUP BY wards.id ORDER BY wards.id")]
+
+
+def remove_from_queue(con, patient_id):
+    cur = con.execute("UPDATE patients SET status = 'removed' WHERE id = ? AND status = 'waiting'", (patient_id,))
+    if cur.rowcount == 0:
+        raise ValueError("patient is not on the waiting list")
 
 
 # ---------- waiting list ----------
@@ -114,6 +172,18 @@ def beds(con):
 
 
 def recent_daily_admissions(con, days=14):
+    if is_live(con):
+        # Patients added to the list per day over the last two weeks; before there is any history,
+        # assume a full hospital turning over at the Ludhiana average stay of 6.4 days.
+        on = today(con)
+        since = date.fromordinal(on.toordinal() - days + 1).isoformat()
+        first = con.execute("SELECT MIN(added_on) FROM patients").fetchone()[0]
+        n = con.execute("SELECT COUNT(*) FROM patients WHERE added_on >= ?", (since,)).fetchone()[0]
+        if first is None or n == 0:
+            beds = con.execute("SELECT COUNT(*) FROM beds").fetchone()[0]
+            return beds / 6.4
+        span = min(days, (on - date.fromisoformat(first)).days + 1)
+        return n / max(span, 1)
     rows = con.execute("SELECT admissions, arrivals FROM daily_log ORDER BY day DESC LIMIT ?", (days,)).fetchall()
     if not rows:
         return 6.0
